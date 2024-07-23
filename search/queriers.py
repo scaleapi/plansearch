@@ -1,5 +1,8 @@
 import openai
 import anthropic
+from vllm import LLM
+from torch.cuda import device_count
+from transformers import AutoTokenizer
 
 from typing import Optional, Union, Any
 import os
@@ -10,9 +13,12 @@ import json
 from pathlib import Path
 import time
 from httpcore import ReadError
+import random
 
 from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
+from querier_utils import generate_anthropic_completion, generate_openai_completion, generate_vllm_chat_completions, generate_vllm_completions, num_tokens_for_convo, generate_internal_completions
+from python_utils import autodetect_dtype_str
 
 
 MODELS_TO_METHOD = {
@@ -21,6 +27,8 @@ MODELS_TO_METHOD = {
     "gpt-3.5-turbo-16k": "chat",
     "gpt-4-turbo-preview": "chat",
     "gpt-4-turbo": "chat",
+    "gpt-4o": "chat",
+    "gpt-4o-mini": "chat",
     "claude-2.1": "anthropicchat",
     "meta-llama/Meta-Llama-3-8B-Instruct": "vllm",
     "casperhansen/llama-3-70b-instruct-awq": "vllm",
@@ -29,49 +37,112 @@ MODELS_TO_METHOD = {
     "together-llama-3-70b": "together"
 }
 
-SUPPORTED_ASSISTANT_STR = ["vllm", "llama_cpp_hf"]
-
+SUPPORTED_CLIENT_FOR_ASSISTANT_STR = ["vllm", "llama_cpp_hf"]
 
 MODEL_NAME_TO_CLIENT_STR = {
-    "gpt-4-turbo": "OpenAI",
-    "claude-3-5-sonnet-20240620": "Anthropic",
-}
-CLIENT_STR_TO_CLIENT = {
-    "OpenAI": openai.OpenAI,
-    "Anthropic": anthropic.Anthropic
+    "gpt-4-turbo": ("OpenAI", openai.OpenAI, {}),
+    "gpt-4o": ("OpenAI", openai.OpenAI, {}),
+    "gpt-4": ("OpenAI-completion", openai.OpenAI, {}),
+    "gpt-4o-mini": ("OpenAI", openai.OpenAI, {}),
+    "gpt-3.5-turbo-instruct": ("OpenAI-completion", openai.OpenAI, {}),
+    "claude-3-5-sonnet-20240620": ("Anthropic", anthropic.Anthropic, {}),
+    "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct": ("vllm-chat", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 4, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
+    "deepseek-ai/DeepSeek-Coder-V2-Lite-Base": ("vllm-completion", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Lite-Base", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 4, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
+    "deepseek-ai/DeepSeek-Coder-V2-Instruct": ("vllm-chat", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
+    "deepseek-ai/DeepSeek-Coder-V2-Base": ("vllm-completion", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Base", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
+    "meta-llama/Meta-Llama-3-8B-Instruct": ("vllm-chat", LLM, {"model": "meta-llama/Meta-Llama-3-8B-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
+    "meta-llama/Meta-Llama-3.1-8B": ("vllm-completion", LLM, {"model": "meta-llama/Meta-Llama-3.1-8B", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
+    "meta-llama/Meta-Llama-3-8B": ("vllm-completion", LLM, {"model": "meta-llama/Meta-Llama-3-8B", "trust_remote_code": True, "gpu_memory_utilization": 0.8, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
+    "custom-chat": ("vllm-chat", LLM, {"trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 8, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
+    "custom-completion": ("vllm-completion", LLM, {"trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 8, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
+    "meta-llama/Meta-Llama-3-405B-Instruct": ("internal", AutoTokenizer.from_pretrained, {"pretrained_model_name_or_path": "meta-llama/Meta-Llama-3-70B-Instruct"}),
 }
 
-MAX_TIMEOUT = 32 + 1e-4
-START_TIMEOUT = 1/8
+PRINT_EVERY_X_DOLLARS = 1e3
+# (input, output) price in dollars per token
+MODEL_NAME_TO_INPUT_OUTPUT_PRICE = {
+    "gpt-4-turbo": (10/1e6, 30/1e6),
+    "gpt-4": (10/1e6, 30/1e6),
+    "gpt-4o": (5/1e6, 15/1e6),
+    "gpt-4o-mini": (0.150/1e6, 0.600/1e6),
+    "gpt-3.5-turbo-instruct": (0, 0),
+    "claude-3-5-sonnet-20240620": (3/1e6, 15/1e6),
+    "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct": (0, 0),
+    "deepseek-ai/DeepSeek-Coder-V2-Lite-Base": (0, 0),
+    "deepseek-ai/DeepSeek-Coder-V2-Instruct": (0, 0),
+    "deepseek-ai/DeepSeek-Coder-V2-Base": (0, 0),
+    "meta-llama/Meta-Llama-3-8B-Instruct": (0, 0),
+    "meta-llama/Meta-Llama-3-405B-Instruct": (0, 0),
+    "meta-llama/Meta-Llama-3.1-8B": (0, 0),
+    "meta-llama/Meta-Llama-3-8B": (0, 0),
+}
 
+
+CLIENT_STR_TO_GENERATE_FN = {
+    "OpenAI": generate_openai_completion,
+    "OpenAI-completion": generate_openai_completion,
+    "Anthropic": generate_anthropic_completion,
+    "vllm-chat": generate_vllm_chat_completions,
+    "vllm-completion": generate_vllm_completions,
+    "internal": generate_internal_completions,
+}
+
+BATCH_CLIENT_FNS = {
+    "vllm-chat", "vllm-completion"
+}
+
+IS_COMPLETION_CLIENT_FNS = {
+    "vllm-completion", "OpenAI-completion"
+}
+
+def is_chat(model_name: str):
+    if model_name not in MODEL_NAME_TO_CLIENT_STR:
+        return "chat" in model_name.lower() or "instruct" in model_name.lower()
+    return MODEL_NAME_TO_CLIENT_STR[model_name][0] not in IS_COMPLETION_CLIENT_FNS
 
 class LLMQuerier(ABC):
     def __init__(self, log_directory: Optional[str] = None, cache_file: Optional[str] = "cache.json") -> None:
         self.log_directory = log_directory
         self.clients = {}
+        self.current_price = 0.
+        self.next_print_price = PRINT_EVERY_X_DOLLARS
 
         self.cache_file = cache_file
+
         if self.cache_file is not None:
+            Path(os.path.dirname(self.cache_file)).mkdir(parents=True, exist_ok=True)
             if not os.path.exists(self.cache_file):
                 with open(self.cache_file, "w") as f:
                     json.dump({}, f)
+            print("Loading cache")
             with open(self.cache_file, "r") as f:
                 self.current_cache = json.load(f)
+            print("Done loading cache")
 
             self.temp_cache_file = os.path.join(os.path.dirname(self.cache_file), "temp_" + os.path.basename(self.cache_file))
             if not os.path.exists(self.temp_cache_file):
                 with open(self.temp_cache_file, "w") as f:
                     json.dump({}, f)
 
-        self.requery_cache = {}
+        self.next_idx_for_requery = {}
 
 
     def generate_with_info(self, model: str, prompts: list[Prompt], frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = False, log_name: str = "") -> list[Completion]:
-        assert model in MODEL_NAME_TO_CLIENT_STR
-        if MODEL_NAME_TO_CLIENT_STR[model] not in self.clients:
-            self.clients[MODEL_NAME_TO_CLIENT_STR[model]] = CLIENT_STR_TO_CLIENT[MODEL_NAME_TO_CLIENT_STR[model]]()
+        if model not in MODEL_NAME_TO_CLIENT_STR:
+            if is_chat(model):
+                MODEL_NAME_TO_CLIENT_STR[model] = MODEL_NAME_TO_CLIENT_STR["custom-chat"]
+                MODEL_NAME_TO_CLIENT_STR[model][2]["model"] = model
+                MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model] = (0, 0)
+            else:
+                MODEL_NAME_TO_CLIENT_STR[model] = MODEL_NAME_TO_CLIENT_STR["custom-completion"]
+                MODEL_NAME_TO_CLIENT_STR[model][2]["model"] = model
+                MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model] = (0, 0)
+
+        if model not in self.clients:
+            self.clients[model] = MODEL_NAME_TO_CLIENT_STR[model][1](**MODEL_NAME_TO_CLIENT_STR[model][2])
+
         print("generating completions...")
-        completions = _generate_completions(self.clients[MODEL_NAME_TO_CLIENT_STR[model]], model, messages=prompts,
+        completions, cost = _generate_completions(self.clients[model], model, messages=prompts,
             current_cache=self.current_cache if self.cache_file is not None else {},
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
@@ -81,11 +152,16 @@ class LLMQuerier(ABC):
             stop=stop,
             temperature=temperature,
             top_p=top_p,
-            requery_cache=self.requery_cache if requery else None,
-            )
-
+            next_idx_for_requery=self.next_idx_for_requery if requery else None,
+        )
         self.log(prompts, completions, log_name=log_name)
         print("done")
+
+        self.current_price += cost
+        if self.current_price > self.next_print_price:
+            print(f"Current spending: ${self.current_price:.2f}")
+            self.next_print_price = (self.current_price // PRINT_EVERY_X_DOLLARS + 1) * PRINT_EVERY_X_DOLLARS
+
         if self.cache_file is not None:
             self.save_cache()
 
@@ -127,106 +203,11 @@ class LLMQuerier(ABC):
         self.log_directory = new_log_directory
 
 
-def _generate_anthropic_completion(client: anthropic.Anthropic, model: str, prompt: list[dict[str, str]], max_tokens: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], **kwargs) -> Completion:
-    curr_backoff = START_TIMEOUT
-    while 1:
-        try:
-            response = client.messages.create(
-                model=model,
-                messages=prompt,
-                max_tokens=max_tokens,
-                stop_sequences=stop,
-                temperature=temperature,
-                top_p=top_p,
-            )
-            break
-        except anthropic.RateLimitError:
-            print("Anthropic rate limit.")
-        except anthropic.APITimeoutError:
-            print("Anthropic API timeout.")
-        except ReadError:
-            print("httpcore ReadError.")
-        except anthropic.APIConnectionError:
-            print("Anthropic API connection error.")
-        except anthropic.InternalServerError:
-            print("Anthropic internal server error.")
-        except json.JSONDecodeError:
-            print("(Anthropic) JSON decode error.")
-        except UnicodeDecodeError:
-            print("(Anthropic) Unicode decode error.")
-        
-        curr_backoff = min(MAX_TIMEOUT, curr_backoff * 2)
-        print(f"Requerying in {curr_backoff} seconds.")
-        time.sleep(curr_backoff)
-    
-    o = response.content[0].text
-    assert o is not None, "Anthropic returned a null response"
-    num_tokens = response.usage.output_tokens
-    if response.stop_reason == "max_tokens":
-        print("Warning, output clipped.")
-
-    return Completion(o, -1, num_tokens)
-
-
-def _generate_openai_completion(client: openai.OpenAI, model: str, prompt: list[dict[str, str]], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], **kwargs) -> Completion:
-    curr_backoff = START_TIMEOUT
-    while 1:
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=prompt,
-                frequency_penalty=frequency_penalty,
-                logit_bias=logit_bias,
-                logprobs=True,
-                max_tokens=max_tokens,
-                presence_penalty=presence_penalty,
-                seed=seed,
-                stop=stop,
-                temperature=temperature,
-                top_p=top_p,
-            )
-            break
-        except openai.RateLimitError:
-            print("OpenAI rate limit.")
-        except openai.APITimeoutError:
-            print("OpenAI API timeout.")
-        except ReadError:
-            print("httpcore ReadError.")
-        except openai.APIConnectionError:
-            print("OpenAI API connection error.")
-        except openai.InternalServerError:
-            print("OpenAI internal server error.")
-        except json.JSONDecodeError:
-            print("(OpenAI) JSON decode error.")
-        except UnicodeDecodeError:
-            print("(OpenAI) Unicode decode error.")
-        
-        curr_backoff = min(MAX_TIMEOUT, curr_backoff * 2)
-        print(f"Requerying in {curr_backoff} seconds.")
-        time.sleep(curr_backoff)
-    
-    choice = response.choices[0]
-    o = choice.message.content
-    logprobs = choice.logprobs.content  # type: ignore
-    assert o is not None, "OpenAI returned a null response"
-    assert logprobs is not None, "OpenAI returned a null logprobs"
-    logprobs = [l.logprob for l in logprobs]
-    num_tokens = len(logprobs)
-    if choice.finish_reason == "length":
-        print("Warning, output clipped.")
-
-    cumulative_logprob = logprobs_to_cumulative(logprobs)
-    return Completion(o, cumulative_logprob, num_tokens)
-
-
-MODEL_NAME_TO_COMPLETION_FN = {
-    "gpt-4-turbo": _generate_openai_completion,
-    "claude-3-5-sonnet-20240620": _generate_anthropic_completion,
-}
-
-
-def cache_hash(model: str, messages: list[dict[str, str]], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
-    message_str = [f"ROLE:{message['role']}|CONTENT:{message['content']}" for message in messages]
+def cache_hash(model: str, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
+    if is_chat(model):
+        message_str = '|'.join([f"ROLE:{message['role']}|CONTENT:{message['content']}" for message in message])
+    else:
+        message_str = message
     if stop is None:
         stop_list = []
     elif isinstance(stop, str):
@@ -235,27 +216,58 @@ def cache_hash(model: str, messages: list[dict[str, str]], frequency_penalty: Op
         sorted(stop)
         stop_list = stop
     logit_bias_list = sorted(logit_bias.items()) if logit_bias is not None else []
-    return f"MODEL:{model}|MESSAGES:{'|'.join(message_str)}|FREQUENCY_PENALTY:{frequency_penalty}|LOGIT_BIAS_LIST:{logit_bias_list}|MAX_TOKENS:{max_tokens}|PRESENCE_PENALTY:{presence_penalty}|SEED:{seed}|STOP_LIST:{stop_list}|TEMPERATURE:{temperature}|TOP_P:{top_p}"
+    return f"MODEL:{model}|MESSAGES:{message_str}|FREQUENCY_PENALTY:{frequency_penalty}|LOGIT_BIAS_LIST:{logit_bias_list}|MAX_TOKENS:{max_tokens}|PRESENCE_PENALTY:{presence_penalty}|SEED:{seed}|STOP_LIST:{stop_list}|TEMPERATURE:{temperature}|TOP_P:{top_p}"
 
 
 # Threaded generation code adapted from Federico Cassano
-def _generate_completions(client: Union[openai.OpenAI, anthropic.Anthropic], model: str, messages: Union[list[Prompt], tuple[Prompt, ...]], current_cache: dict[str, dict[str, Any]], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], requery_cache: Optional[dict[str, int]] = None) -> list[Completion]:
+def _generate_completions(client: Union[openai.OpenAI, anthropic.Anthropic], model: str, messages: Union[list[Prompt], tuple[Prompt, ...]], current_cache: dict[str, dict[str, Any]], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], next_idx_for_requery: Optional[dict[str, int]] = None) -> tuple[list[Completion], float]:
     if not isinstance(messages, (list, tuple)):
         raise ValueError("messages must be a list or tuple")
-    
-    completion_generator_fn = MODEL_NAME_TO_COMPLETION_FN[model]
+    assert len(messages)
+
+    is_chat = MODEL_NAME_TO_CLIENT_STR[model][0] not in IS_COMPLETION_CLIENT_FNS
+    if is_chat:
+        assert all(isinstance(message_seq, list) for message_seq in messages)
+    else:
+        assert all(isinstance(message_seq, str) for message_seq in messages)
+
+    completion_generator_fn = CLIENT_STR_TO_GENERATE_FN[MODEL_NAME_TO_CLIENT_STR[model][0]]
 
     completions: list[Optional[Completion]] = [None] * len(messages)
     threads = []
+    to_generate = []
 
-    messages = [[{"role": "user", "content": message}] if isinstance(message, str) else message for message in messages]
-    assert all(isinstance(message_seq, list) for message_seq in messages)
+    input_tokens = 0
+    not_cached = []
+    new_next_idx_for_requery = {}
+    for i, prompt in enumerate(messages):
+        cache_key = cache_hash(model, prompt, frequency_penalty, logit_bias, max_tokens, presence_penalty, seed, stop, temperature, top_p)
+        cache_i = i
 
-    def generate_completion(prompt: list[dict[str, str]], i: int):
-        completions[i] = completion_generator_fn(
+        # next_idx_for_requery is a dictionary mapping cache keys to the next unused index
+        # Otherwise, if we started from an earlier index, we may use the cached completion instead
+        if next_idx_for_requery is not None:
+            cache_i = i + next_idx_for_requery.get(cache_key, 0)
+            # Updates the next index that should be used for requerying on a new call of _generate_completions
+            assert new_next_idx_for_requery.get(cache_key, 0) < cache_i + 1
+            new_next_idx_for_requery[cache_key] = cache_i + 1
+
+        cache_key = f"{cache_i}|{cache_key}"
+
+        if cache_key in current_cache:
+            completions[i] = Completion(current_cache[cache_key]["text"], current_cache[cache_key]["cum_logprob"], current_cache[cache_key]["num_tokens"])
+        else:
+            not_cached.append((i, cache_key))
+            to_generate.append((prompt, i))
+            input_tokens += num_tokens_for_convo(prompt, is_chat)
+
+    if MODEL_NAME_TO_CLIENT_STR[model][0] in BATCH_CLIENT_FNS:
+        to_generate_prompts = [prompt for prompt, _ in to_generate]
+        if len(to_generate_prompts):
+            genned_completions = completion_generator_fn(
                 client=client,
                 model=model,
-                prompt=prompt,
+                prompts=to_generate_prompts,
                 frequency_penalty=frequency_penalty,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
@@ -265,44 +277,51 @@ def _generate_completions(client: Union[openai.OpenAI, anthropic.Anthropic], mod
                 temperature=temperature,
                 top_p=top_p,
             )
-
-    not_cached = []
-    new_requery_cache = {}
-    for i, prompt in enumerate(messages):
-        cache_key = cache_hash(model, prompt, frequency_penalty, logit_bias, max_tokens, presence_penalty, seed, stop, temperature, top_p)
-        cache_i = i
-
-        if requery_cache is not None:
-            cache_i += requery_cache.get(cache_key, 0)
-            new_requery_cache[cache_key] = max(cache_i, new_requery_cache.get(cache_key, 0))
-
-        cache_key = f"{cache_i}|{cache_key}"
-
-        if cache_key in current_cache:
-            completions[i] = Completion(current_cache[cache_key]["text"], current_cache[cache_key]["cum_logprob"], current_cache[cache_key]["num_tokens"])
-        else:
-            not_cached.append((i, cache_key))
+            for (_, i), completion in zip(to_generate, genned_completions):
+                completions[i] = completion
+    else:
+        def generate_completion(prompt: list[dict[str, str]], i: int):
+            completions[i] = completion_generator_fn(
+                    client=client,
+                    model=model,
+                    prompt=prompt,
+                    frequency_penalty=frequency_penalty,
+                    logit_bias=logit_bias,
+                    max_tokens=max_tokens,
+                    presence_penalty=presence_penalty,
+                    seed=seed,
+                    stop=stop,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
+        for prompt, i in to_generate:
             thread = threading.Thread(
                 target=generate_completion, args=(prompt, i))
             threads.append(thread)
             thread.start()
 
-    for thread in threads:
-        thread.join()
-    
+        for thread in threads:
+            thread.join()
+
     assert all(c is not None for c in completions), "Some completions are missing -- threading bug?"
 
+    output_tokens = 0
     for uncached_idx, key in not_cached:
         current_cache[key] = {"text": completions[uncached_idx].code, "cum_logprob": completions[uncached_idx].cumulative_logprob, "num_tokens": completions[uncached_idx].num_tokens}
+        output_tokens += completions[uncached_idx].num_tokens
 
-    for cache, i in new_requery_cache.items():
-        requery_cache[cache] = max(i, requery_cache.get(cache, 0))
-    
-    return completions 
+    for cache, i in new_next_idx_for_requery.items():
+        assert next_idx_for_requery.get(cache, 0) <= i
+        next_idx_for_requery[cache] = i
+
+    total_price = input_tokens * MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model][0] + output_tokens * MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model][1]
+    return completions, total_price
 
 
 if __name__ == "__main__":
     print("starting basic query...")
     llmq = LLMQuerier("temp_logs", None)
-    print(llmq.generate("gpt-4-turbo", ["Please count to 10."], max_tokens=1000, temperature=0.1, top_p=0.9))
+    # print(llmq.generate("meta-llama/Meta-Llama-3-405B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
+    # print(llmq.generate("meta-llama/Meta-Llama-3-8B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
+    print(llmq.generate("claude-3-5-sonnet-20240620", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("claude-3-5-sonnet-20240620", ["What is up?"], max_tokens=1000, temperature=0.1, top_p=0.9))

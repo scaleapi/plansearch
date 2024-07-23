@@ -15,6 +15,8 @@ from simple_filter_models import (
     add_idea_filter_args, get_idea_filter_model,
 )
 from simple_idea_model import add_simple_idea_args, get_simple_idea_model 
+from simple_observation_model import add_simple_observation_args, get_simple_observation_model
+from pseudocode_model import add_pseudocode_args, get_pseudocode_model
 from parsel_model import add_parsel_args, get_parsel_model 
 
 
@@ -27,6 +29,8 @@ SEARCH_ALGS_TO_GET_ARGS_MODEL = {
     "simple_filter": (add_simple_prompt_filter_args, get_simple_prompt_filter_model),
     "simple_idea": (add_simple_idea_args, get_simple_idea_model),
     "idea_filter": (add_idea_filter_args, get_idea_filter_model),
+    "observation": (add_simple_observation_args, get_simple_observation_model),
+    "pseudocode": (add_pseudocode_args, get_pseudocode_model),
     "parsel": (add_parsel_args, get_parsel_model),
 }
 
@@ -86,6 +90,8 @@ def eval_main(search_alg: str):
     Path(os.path.dirname(output_result_path)).mkdir(parents=True, exist_ok=True)
     print(f"Copying output file from {args.output} to {output_result_path}")
     shutil.copyfile(args.output, output_result_path)
+
+    print(f"Total spending: ${model.querier.current_price:.2f}")
 
 
 if __name__ == "__main__":

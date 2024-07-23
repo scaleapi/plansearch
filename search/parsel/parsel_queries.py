@@ -1,5 +1,5 @@
 from fn import Function
-from queriers import LLMQuerier, MODELS_TO_METHOD, SUPPORTED_ASSISTANT_STR
+from queriers import LLMQuerier, MODELS_TO_METHOD, SUPPORTED_CLIENT_FOR_ASSISTANT_STR
 from prompts.fn_prompts import chat_prompt_to_implement_fn, completion_prompt_to_implement_fn, parsel_to_code_chat_suffix
 from parsing_utils import remove_helper_imports, extract_code
 
@@ -7,7 +7,7 @@ from parsing_utils import remove_helper_imports, extract_code
 # Call code model and optionally filter the results
 # Generate implementations for the function
 def gen_fn_implementations(fns: list[Function], querier: LLMQuerier, model: str, num_completions: int, max_tokens: int = 1000, with_child_impls: bool = False) -> list[str]:
-    if model in MODELS_TO_METHOD and MODELS_TO_METHOD[model] in SUPPORTED_ASSISTANT_STR: 
+    if model in MODELS_TO_METHOD and MODELS_TO_METHOD[model] in SUPPORTED_CLIENT_FOR_ASSISTANT_STR: 
         raise NotImplementedError("not fully integrated into Scale")
         if with_child_impls:
             raise NotImplementedError("Assistant start in `fn.py` implement not implemented yet with fixed child impls.")
@@ -29,7 +29,7 @@ def gen_fn_implementations(fns: list[Function], querier: LLMQuerier, model: str,
     
     assert len(implementations) == len(fns) * num_completions
 
-    if not (model in MODELS_TO_METHOD and MODELS_TO_METHOD[model] in SUPPORTED_ASSISTANT_STR):
+    if not (model in MODELS_TO_METHOD and MODELS_TO_METHOD[model] in SUPPORTED_CLIENT_FOR_ASSISTANT_STR):
         fn_implementations = [remove_helper_imports(extract_code(implementations[i*num_completions:(i+1)*num_completions], fn_name=fns[i].name), remove_def=True, remove_import=True) for i in range(len(fns))]
     else:
         raise NotImplementedError("not fully integrated into Scale")
@@ -56,4 +56,3 @@ def gen_fn_tests(fn: Function, querier: LLMQuerier, model: str, num_completions:
     )
     tests = set([test[0] for test in tests if test])
     return tests
-

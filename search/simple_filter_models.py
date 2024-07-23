@@ -9,8 +9,6 @@ from base_classes import Problem, SearchModel
 from basic_prompting import SimplePromptModel, add_basic_prompting_args
 from simple_idea_model import SimpleIdeaModel, add_simple_idea_args
 from exec_utils import run_tests_per_code
-from queriers import LLMQuerier, MODEL_NAME_TO_CLIENT_STR
-from parsing_utils import markdown_codeblock_extract
 
 
 class SimpleFilteringModel(SearchModel):
@@ -22,6 +20,7 @@ class SimpleFilteringModel(SearchModel):
         self.gen_batch_size = gen_batch_size
         self.num_batches_to_try = num_batches_to_try
         self.timeout = timeout
+        self.querier = self.base_search_model.querier
 
     def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:        
         selected_codes = [None] * len(problems)
@@ -32,7 +31,7 @@ class SimpleFilteringModel(SearchModel):
             tiled_problems = unsolved_problems * self.gen_batch_size
             
             self.base_search_model.querier.set_log_directory(os.path.join(self.experiment_directory, f"iter_{iter_num}"))
-            generated = self.base_search_model.generate_solutions(tiled_problems, requery=True)
+            generated = self.base_search_model.generate_solutions(tiled_problems)
             assert len(generated) == len(tiled_problems)
 
             results = run_tests_per_code(generated, [problem.public_tests for problem in tiled_problems], [self.timeout] * len(tiled_problems))
@@ -103,5 +102,5 @@ def add_idea_filter_args(parser: argparse.ArgumentParser):
     add_simple_filter_args(parser)
 
 def get_idea_filter_model(args: argparse.Namespace) -> SearchModel:
-    si_model = SimpleIdeaModel(args.idea_model, args.code_model, args.experiment_directory, cache_file=args.cache_file, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
+    si_model = SimpleIdeaModel(args.idea_model, args.code_model, args.experiment_directory, cache_file=args.cache_file, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, use_few_shot=not args.zero_shot)
     return SimpleFilteringModel("idea_filter", experiment_directory=args.experiment_directory, cache_file=args.cache_file, base_search_model=si_model, gen_batch_size=args.gen_batch_size, num_batches_to_try=args.num_batches_to_try, timeout=args.timeout)

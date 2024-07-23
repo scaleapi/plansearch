@@ -9,7 +9,7 @@ import shutil
 
 from base_classes import Problem, SearchModel
 from coderm.prompts import Prompt
-from queriers import LLMQuerier, MODEL_NAME_TO_CLIENT_STR
+from queriers import MODEL_NAME_TO_CLIENT_STR, is_chat
 from parsing_utils import markdown_codeblock_extract
 
 
@@ -17,6 +17,7 @@ class BasicPromptingModel(SearchModel):
     def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, use_cot: bool = False, use_sys_prompts: bool = True, use_few_shot: bool = True, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
         super().__init__(model_name, experiment_directory=experiment_directory, cache_file=cache_file)
 
+        self.is_chat = is_chat(model_name)
         self.use_cot = use_cot
         self.use_sys_prompts = use_sys_prompts
         self.use_few_shot = use_few_shot
@@ -31,11 +32,17 @@ class BasicPromptingModel(SearchModel):
         self.top_p = top_p
 
     @abstractmethod
-    def format_problem_to_prompt(self, problem: Problem) -> list[dict[str, str]]:
+    def format_problem_to_prompt(self, problem: Problem) -> Prompt:
         pass
 
     def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
         problem_prompts = [self.format_problem_to_prompt(problem) for problem in problems]
+
+        stop = [self.stop] if isinstance(self.stop, str) else self.stop
+        if not self.is_chat:
+            stop = [] if stop is None else stop
+            stop += ["# START NEW CODE"]
+
         generated = self.querier.generate(self.model_name, 
                               problem_prompts,
                               frequency_penalty=self.frequency_penalty,
@@ -43,33 +50,39 @@ class BasicPromptingModel(SearchModel):
                               max_tokens=self.max_tokens,
                               presence_penalty=self.presence_penalty,
                               seed=self.seed,
-                              stop=self.stop,
+                              stop=stop,
                               temperature=self.temperature,
                               top_p=self.top_p,
                               log_name="solution_queries",
-                              requery=kwargs.get("requery", False),
+                              requery=True,
                               )
-        return [markdown_codeblock_extract(genned).strip() for genned in generated]
+        if self.is_chat:
+            return [markdown_codeblock_extract(genned).strip() for genned in generated]
+        else:
+            return [problem.starter_code.rstrip() + '\n' + genned if problem.has_starter_code() else genned for genned, problem in zip(generated, problems)]
 
 
 class SimplePromptModel(BasicPromptingModel):
     import prompts.simple_prompts as prompts
-    def format_problem_to_prompt(self, problem: Problem) -> List[dict[str, str]]:
-        convo = []
-        if self.use_sys_prompts:
-            if self.use_cot:
-                convo.append({"role": "system", "content": self.prompts.SYSTEM_PROMPT_COT})
-            else:
-                convo.append({"role": "system", "content": self.prompts.SYSTEM_PROMPT})
+    def format_problem_to_prompt(self, problem: Problem) -> Prompt:
+        if self.is_chat:
+            convo = []
+            if self.use_sys_prompts:
+                if self.use_cot:
+                    convo.append({"role": "system", "content": self.prompts.SYSTEM_PROMPT_COT})
+                else:
+                    convo.append({"role": "system", "content": self.prompts.SYSTEM_PROMPT})
 
-        convo.append({"role": "user", "content": self.prompts.user_content(problem.problem_str, problem.starter_code, use_cot=self.use_cot, use_few_shot=self.use_few_shot)})
-        return convo
+            convo.append({"role": "user", "content": self.prompts.user_content_chat(problem.problem_str, problem.starter_code, use_cot=self.use_cot, use_few_shot=self.use_few_shot)})
+            return convo
+        else:
+            out_str = self.prompts.user_content_completion(problem.problem_str, problem.starter_code, use_cot=self.use_cot, use_few_shot=self.use_few_shot)
+            return out_str
 
 
 def add_basic_prompting_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--model",
-        choices=MODEL_NAME_TO_CLIENT_STR.keys(),
         required=True,
         help="Model to use"
     )

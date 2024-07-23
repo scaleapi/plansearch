@@ -104,6 +104,12 @@ class Problem:
 
     @staticmethod
     def from_coderm_item(question: str, starter_code: str, public_tests: Optional[dict[str, Any]], tests: Optional[dict[str, Any]], solutions: Optional[list[str]] = None) -> "Problem":
+        assert (public_tests is not None) or (tests is not None)
+        if public_tests is None:
+            public_tests = {"fn_name": tests.get("fn_name", None), "inputs": None, "outputs": None}
+        if tests is None:
+            tests = {"fn_name": public_tests.get("fn_name", None), "inputs": None, "outputs": None}
+
         assert public_tests.get("fn_name", None) == tests.get("fn_name", None)
         fn_name = tests.get("fn_name", None)
 

@@ -77,3 +77,12 @@ def check_fn(
         return output_results
     else:
         return run_tests(impl_str, tests, timeout)
+
+if __name__ == "__main__":
+    n_codes = 200
+    import random
+    random_nums = [random.randint(0, 100) for _ in range(n_codes)]
+    codes = [f"print({num})" for num in random_nums]
+    tests = [[Test(([""], {}), str(num), None)] for num in random_nums]
+    timeouts = [5 for _ in range(n_codes)]
+    print(run_tests_per_code(codes, tests, timeouts))

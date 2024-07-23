@@ -28,7 +28,7 @@ from queriers import LLMQuerier, MODELS_TO_METHOD
 
 
 def compute_parsel_output(problem: Problem, args: argparse.Namespace, querier: LLMQuerier, subdirectory: str) -> Optional[tuple[str, str]]:
-    if args.text_model_name in MODELS_TO_METHOD[args.text_model_name] and MODELS_TO_METHOD[args.text_model_name] == "completions":
+    if args.text_model_name in MODELS_TO_METHOD and MODELS_TO_METHOD[args.text_model_name] == "completions":
         raise NotImplementedError("not yet integrated")
         solution_prompt = QUESTION_PREFIX + problem.problem_str + SOLUTION_PROMPT_FOR_COMPLETION
         stop = ['"""']

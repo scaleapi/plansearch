@@ -3,13 +3,13 @@ import argparse
 import os
 
 from base_classes import Problem, SearchModel
-from queriers import LLMQuerier, MODEL_NAME_TO_CLIENT_STR
+from queriers import MODEL_NAME_TO_CLIENT_STR
 from parsing_utils import markdown_codeblock_extract
 
 
 class BackTranslateModel(SearchModel):
     import prompts.backtranslate_prompts as prompts
-    def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
+    def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, num_words: Optional[int] = None):
         super().__init__(model_name, experiment_directory=experiment_directory, cache_file=cache_file)
 
         self.frequency_penalty = frequency_penalty
@@ -20,11 +20,12 @@ class BackTranslateModel(SearchModel):
         self.stop = stop
         self.temperature = temperature
         self.top_p = top_p
+        self.num_words = num_words
 
     def solution_to_nl_prompt(self, problem: Problem) -> list[dict[str, str]]:
         assert problem.solutions is not None and len(problem.solutions)
         convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_TRANSLATE},
-                 {"role": "user", "content": self.prompts.translate_code_solution(problem.problem_str, problem.solutions[0], problem.has_starter_code())}]
+                 {"role": "user", "content": self.prompts.translate_code_solution(problem.problem_str, problem.solutions[0], problem.has_starter_code(), num_words=self.num_words)}]
         return convo
     
     def nl_to_actual_solution_prompt(self, problem: Problem, nl_solution: str) -> list[dict[str, str]]:
@@ -44,6 +45,8 @@ class BackTranslateModel(SearchModel):
                               stop=self.stop,
                               temperature=self.temperature,
                               top_p=self.top_p,
+                              log_name="solutions",
+                              requery=True,
                               )
         nl_to_acc_sol_prompts = [self.nl_to_actual_solution_prompt(problem, nl_sol) for problem, nl_sol in zip(problems, nl_solutions)]
         generated = self.querier.generate(self.model_name, 
@@ -56,6 +59,8 @@ class BackTranslateModel(SearchModel):
                               stop=self.stop,
                               temperature=self.temperature,
                               top_p=self.top_p,
+                              log_name="codes",
+                              requery=True,
                               )
         return [markdown_codeblock_extract(genned).strip() for genned in generated]
 
@@ -63,7 +68,6 @@ class BackTranslateModel(SearchModel):
 def add_backtranslate_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--model",
-        choices=MODEL_NAME_TO_CLIENT_STR.keys(),
         required=True,
         help="Model to use"
     )
@@ -85,6 +89,12 @@ def add_backtranslate_args(parser: argparse.ArgumentParser):
         default=0.9,
         help="Top-p sampling"
     )
+    parser.add_argument(
+        "--num-words",
+        type=int,
+        default=None,
+        help="Approximate number of words to generate in backtranslation"
+    )
 
 def get_backtranslate_model(args: argparse.Namespace) -> SearchModel:
-    return BackTranslateModel(args.model, args.experiment_directory, cache_file=args.cache_file, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
+    return BackTranslateModel(args.model, args.experiment_directory, cache_file=args.cache_file, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, num_words=args.num_words)

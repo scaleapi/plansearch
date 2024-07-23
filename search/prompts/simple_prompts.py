@@ -19,7 +19,12 @@ LCB_IO_FEWSHOT = [
 Calculate Difference for Each Gift: For each gift, the number of operations needed to reduce the count of candies and oranges to min_candies and min_oranges, respectively, is determined. If both candies and oranges need to be reduced, it checks which count is higher (candies or oranges) and matches the reduction to the larger discrepancy.
 Maximize Simultaneous Reduction: The solution cleverly uses the max function to determine the number of moves for each gift. It calculates the maximum of the difference between the current number of candies and min_candies, and the difference between the current number of oranges and min_oranges. This effectively simulates reducing both candies and oranges simultaneously as much as possible, which minimizes the total moves.
 Aggregate Moves Across Gifts: The number of moves calculated for each gift (from the previous step) is summed up for each test case to determine the total moves required to equalize all gifts.
-Output Result: For each test case, the total number of moves is printed, representing the minimal operations required to equalize the candies and oranges for all gifts in that test case. This output reflects the efficient strategy of simultaneous reduction wherever possible to minimize the number of operations."""
+Output Result: For each test case, the total number of moves is printed, representing the minimal operations required to equalize the candies and oranges for all gifts in that test case. This output reflects the efficient strategy of simultaneous reduction wherever possible to minimize the number of operations.""",
+        "observation": """Here are some observations that may help in solving the problem:
+1. $t$ is always less than $1000$, and $n$ is always less than $50$. This suggests that the problem can be solved efficiently without needing complex algorithms or data structures.
+2. $a_i$ and $b_i$ can be as large as $10^9$, indicating that the input values can be quite large. This suggests that the solution should be efficient in handling large numbers. Iterating straightforwardly over these values would not run in time.
+3. $a_i$ and $b_i$ are independent of each other, meaning that the number of candies and oranges in each gift can vary. This suggests that the solution should consider each gift separately and find a way to equalize them efficiently.
+4. A greedy approach can be used to minimize the number of moves, since there is no reason to reduce the number of candies or oranges beyond the minimum already."""
     },
     {
         "question": "Let's call a string a phone number if it has length 11 and fits the pattern \"8xxxxxxxxxx\", where each \"x\" is replaced by a digit.\n\nFor example, \"80123456789\" and \"80000000000\" are phone numbers, while \"8012345678\" and \"79000000000\" are not.\n\nYou have n cards with digits, and you want to use them to make as many phone numbers as possible. Each card must be used in at most one phone number, and you don't have to use all cards. The phone numbers do not necessarily have to be distinct.\n\nInput\n\nThe first line contains an integer n \u2014 the number of cards with digits that you have (1 \u2264 n \u2264 100).\n\nThe second line contains a string of n digits (characters \"0\", \"1\", ..., \"9\") s_1, s_2, \u2026, s_n. The string will not contain any other characters, such as leading or trailing spaces.\n\nOutput\n\nIf at least one phone number can be made from these cards, output the maximum number of phone numbers that can be made. Otherwise, output 0.\n\nExamples\n\nInput\n\n11\n00000000008\n\n\nOutput\n\n1\n\n\nInput\n\n22\n0011223344556677889988\n\n\nOutput\n\n2\n\n\nInput\n\n11\n31415926535\n\n\nOutput\n\n0\n\nNote\n\nIn the first example, one phone number, \"8000000000\", can be made from these cards.\n\nIn the second example, you can make two phone numbers from the cards, for example, \"80123456789\" and \"80123456789\".\n\nIn the third example you can't make any phone number from the given cards.",
@@ -27,7 +32,9 @@ Output Result: For each test case, the total number of moves is printed, represe
         "cot": """Count Eights: The first step is to count the number of cards with the digit 8, as this digit is crucial for forming phone numbers. This count represents the maximum number of phone numbers that can be made from the given cards.
 Determine Maximum Possible Numbers: The maximum number of phone numbers that can be formed is calculated by dividing the total number of cards by 11, as each phone number requires 11 digits. This value represents the upper limit on the number of phone numbers that can be formed.
 Find Minimum of Counts: The solution then determines the maximum possible number of phone numbers by taking the minimum of the count of cards with the digit 8 and the maximum possible numbers calculated in the previous step. This ensures that the number of phone numbers formed is limited by the availability of cards with the digit 8.
-Output Result: The maximum possible number of phone numbers that can be formed is printed as the final output. This output reflects the efficient strategy of maximizing the use of cards with the digit 8 to form phone numbers."""
+Output Result: The maximum possible number of phone numbers that can be formed is printed as the final output. This output reflects the efficient strategy of maximizing the use of cards with the digit 8 to form phone numbers.""",
+        "observation": """Here are some observations that may help in solving the problem:
+1. """
     }
 ]
 
@@ -53,7 +60,7 @@ Return Result: The number of characters that need to be appended to s is returne
 
 
 # Adapted from CodeRM's prompting code
-def user_content(question: str, starter_code: str = "", use_cot: bool = False, use_few_shot: bool = True) -> str:
+def user_content_chat(question: str, starter_code: str = "", use_cot: bool = False, use_few_shot: bool = True) -> str:
     og_q = question.replace('"""', r'\"""')
     out_str = ""
 
@@ -82,4 +89,28 @@ def user_content(question: str, starter_code: str = "", use_cot: bool = False, u
     if not (starter_code == "" or starter_code is None):
         out_str += "\n\nYour solution should also utilize the following starter code:\n\n```python\n" + starter_code + "\n```"
 
+    return out_str
+
+
+def user_content_completion(question: str, starter_code: str = "", use_cot: bool = False, use_few_shot: bool = True) -> str:
+    og_q = question.replace('"""', r'\"""')
+    out_str = "# START NEW CODE\n"
+
+    if use_few_shot:
+        if starter_code == "" or starter_code is None:
+            shots_arr = LCB_IO_FEWSHOT
+        else:
+            shots_arr = LCB_FN_FEWSHOT
+
+        for shot in shots_arr:
+            out_str += f'"""\n{shot["question"]}\n"""\n'
+            if use_cot:
+                out_str += f"{shot['cot']}\n\n"
+            out_str += f"{shot['code']}\n\n\n"
+            out_str += "# START NEW CODE\n"
+        
+    out_str += f'"""\n{og_q}\n"""\n'
+    if not (starter_code == "" or starter_code is None):
+        out_str += starter_code.rstrip() + '\n'
+    
     return out_str

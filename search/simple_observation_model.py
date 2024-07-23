@@ -7,10 +7,10 @@ from queriers import MODEL_NAME_TO_CLIENT_STR
 from parsing_utils import markdown_codeblock_extract
 
 
-class SimpleIdeaModel(SearchModel):
-    import prompts.idea_prompts as prompts
-    def __init__(self, idea_model: str, code_model: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None, use_few_shot: bool = True):
-        super().__init__("simple_idea", experiment_directory=experiment_directory, cache_file=cache_file)
+class SimpleObservationModel(SearchModel):
+    import prompts.simple_observation_prompts as prompts
+    def __init__(self, idea_model: str, code_model: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None):
+        super().__init__("observation", experiment_directory=experiment_directory, cache_file=cache_file)
 
         self.idea_model = idea_model
         self.code_model = code_model
@@ -24,11 +24,15 @@ class SimpleIdeaModel(SearchModel):
         self.code_temperature = code_temperature
         self.idea_temperature = idea_temperature
         self.top_p = top_p
-        self.use_few_shot = use_few_shot
 
-    def get_nl_sols_prompt(self, problem: Problem) -> list[dict[str, str]]:
+    def get_observations_prompt(self, problem: Problem) -> list[dict[str, str]]:
+        convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_OBSERVATION},
+                 {"role": "user", "content": self.prompts.get_observation(problem.problem_str)}]
+        return convo
+
+    def get_nl_sols_prompt(self, problem: Problem, observations: str) -> list[dict[str, str]]:
         convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_TRANSLATE},
-                 {"role": "user", "content": self.prompts.get_nl_solution(problem.problem_str, problem.has_starter_code(), use_few_shot=self.use_few_shot)}]
+                 {"role": "user", "content": self.prompts.get_nl_solution(problem.problem_str, problem.has_starter_code(), observations)}]
         return convo
     
     def nl_to_code_solution_prompt(self, problem: Problem, nl_solution: str) -> list[dict[str, str]]:
@@ -37,7 +41,21 @@ class SimpleIdeaModel(SearchModel):
         return convo
 
     def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
-        get_nl_sols_prompt = [self.get_nl_sols_prompt(problem) for problem in problems]
+        get_observations_prompt = [self.get_observations_prompt(problem) for problem in problems]
+        observations = self.querier.generate(self.idea_model, 
+                              get_observations_prompt,
+                              frequency_penalty=self.frequency_penalty,
+                              logit_bias=self.logit_bias,
+                              max_tokens=self.max_tokens,
+                              presence_penalty=self.presence_penalty,
+                              seed=self.seed,
+                              stop=self.stop,
+                              temperature=self.idea_temperature,
+                              top_p=self.top_p,
+                              requery=True,
+                              )
+
+        get_nl_sols_prompt = [self.get_nl_sols_prompt(problem, observation) for problem, observation in zip(problems, observations)]
         nl_solutions = self.querier.generate(self.idea_model, 
                               get_nl_sols_prompt,
                               frequency_penalty=self.frequency_penalty,
@@ -66,7 +84,7 @@ class SimpleIdeaModel(SearchModel):
         return [markdown_codeblock_extract(genned).strip() for genned in generated]
 
 
-def add_simple_idea_args(parser: argparse.ArgumentParser):
+def add_simple_observation_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--idea-model",
         required=True,
@@ -101,11 +119,6 @@ def add_simple_idea_args(parser: argparse.ArgumentParser):
         default=0.9,
         help="Top-p sampling"
     )
-    parser.add_argument(
-        "--zero-shot",
-        action="store_true",
-        help="Whether to do zero shot instead"
-    )
 
-def get_simple_idea_model(args: argparse.Namespace) -> SearchModel:
-    return SimpleIdeaModel(args.idea_model, args.code_model, args.experiment_directory, cache_file=args.cache_file, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, use_few_shot=not args.zero_shot)
+def get_simple_observation_model(args: argparse.Namespace) -> SearchModel:
+    return SimpleObservationModel(args.idea_model, args.code_model, args.experiment_directory, cache_file=args.cache_file, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens)

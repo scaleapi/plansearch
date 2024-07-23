@@ -2,8 +2,13 @@ import os
 from pathlib import Path
 from typing import Any, Optional, Union, TypeVar
 import json
+import random
 import sys
 
+
+def random_print(print_str: str, p: float = 1e-3):
+    if random.random() < p:
+        print(print_str)
 
 T = TypeVar('T')
 def chunk(lst: list[T], n: int):
@@ -47,6 +52,13 @@ def log_to_dir(base_dir: str, file_name_to_data: dict[str, Union[str, dict]]):
             else:
                 f.write(data)
 
+# From CodeRM
+def autodetect_dtype_str() -> str:
+    import torch
+    if torch.cuda.is_bf16_supported():
+        return "bfloat16"
+    else:
+        return "auto"
 
 if __name__ == "__main__":
     pass

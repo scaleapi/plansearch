@@ -5,7 +5,6 @@ import os
 
 from parsel.translate_to_parsel import compute_parsel_output
 from base_classes import Problem, SearchModel
-from queriers import LLMQuerier
 
 
 CONVERT_FN_TO_STDIO = """
