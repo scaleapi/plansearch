@@ -17,7 +17,7 @@ import random
 
 from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
-from querier_utils import generate_anthropic_completion, generate_openai_completion, generate_vllm_chat_completions, generate_vllm_completions, num_tokens_for_convo, generate_internal_completions
+from querier_utils import generate_anthropic_completion, generate_openai_chat_completion, generate_openai_completion, generate_vllm_chat_completions, generate_vllm_completions, num_tokens_for_convo, generate_internal_completions
 from python_utils import autodetect_dtype_str
 
 
@@ -79,7 +79,7 @@ MODEL_NAME_TO_INPUT_OUTPUT_PRICE = {
 
 
 CLIENT_STR_TO_GENERATE_FN = {
-    "OpenAI": generate_openai_completion,
+    "OpenAI": generate_openai_chat_completion,
     "OpenAI-completion": generate_openai_completion,
     "Anthropic": generate_anthropic_completion,
     "vllm-chat": generate_vllm_chat_completions,
