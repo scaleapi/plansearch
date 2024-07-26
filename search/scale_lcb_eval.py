@@ -17,7 +17,9 @@ from simple_filter_models import (
 from simple_idea_model import add_simple_idea_args, get_simple_idea_model 
 from simple_observation_model import add_simple_observation_args, get_simple_observation_model
 from pseudocode_model import add_pseudocode_args, get_pseudocode_model
+
 from parsel_model import add_parsel_args, get_parsel_model 
+from combo_observation_model import add_combo_observation_args, get_combo_observation_model
 
 
 def noop_add_args(parser: argparse.ArgumentParser):
@@ -29,9 +31,10 @@ SEARCH_ALGS_TO_GET_ARGS_MODEL = {
     "simple_filter": (add_simple_prompt_filter_args, get_simple_prompt_filter_model),
     "simple_idea": (add_simple_idea_args, get_simple_idea_model),
     "idea_filter": (add_idea_filter_args, get_idea_filter_model),
-    "observation": (add_simple_observation_args, get_simple_observation_model),
+    "simple_observation": (add_simple_observation_args, get_simple_observation_model),
     "pseudocode": (add_pseudocode_args, get_pseudocode_model),
     "parsel": (add_parsel_args, get_parsel_model),
+    "combo_observation": (add_combo_observation_args, get_combo_observation_model),
 }
 
 

@@ -3,6 +3,7 @@ import anthropic
 from vllm import LLM
 from torch.cuda import device_count
 from transformers import AutoTokenizer
+from tqdm import tqdm
 
 from typing import Optional, Union, Any
 import os
@@ -17,8 +18,8 @@ import random
 
 from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
-from querier_utils import generate_anthropic_completion, generate_openai_chat_completion, generate_openai_completion, generate_vllm_chat_completions, generate_vllm_completions, num_tokens_for_convo, generate_internal_completions
-from python_utils import autodetect_dtype_str
+from querier_utils import generate_anthropic_completion, generate_openai_chat_completion, generate_openai_completion, generate_vllm_chat_completions, generate_vllm_completions, num_tokens_for_convo, generate_internal_completions, generate_llm_engine_chat_completion, generate_llm_engine_completion
+from python_utils import autodetect_dtype_str, chunk
 
 
 MODELS_TO_METHOD = {
@@ -52,6 +53,8 @@ MODEL_NAME_TO_CLIENT_STR = {
     "deepseek-ai/DeepSeek-Coder-V2-Base": ("vllm-completion", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Base", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
     "meta-llama/Meta-Llama-3-8B-Instruct": ("vllm-chat", LLM, {"model": "meta-llama/Meta-Llama-3-8B-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
     "meta-llama/Meta-Llama-3.1-8B": ("vllm-completion", LLM, {"model": "meta-llama/Meta-Llama-3.1-8B", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
+    "llama-3-1-8b-instruct": ("llmengine-chat", AutoTokenizer.from_pretrained, {"pretrained_model_name_or_path": "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
+    "llama-3-1-70b-instruct": ("llmengine-chat", AutoTokenizer.from_pretrained, {"pretrained_model_name_or_path": "meta-llama/Meta-Llama-3.1-70B-Instruct"}),
     "meta-llama/Meta-Llama-3-8B": ("vllm-completion", LLM, {"model": "meta-llama/Meta-Llama-3-8B", "trust_remote_code": True, "gpu_memory_utilization": 0.8, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
     "custom-chat": ("vllm-chat", LLM, {"trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 8, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
     "custom-completion": ("vllm-completion", LLM, {"trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 8, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
@@ -74,6 +77,8 @@ MODEL_NAME_TO_INPUT_OUTPUT_PRICE = {
     "meta-llama/Meta-Llama-3-8B-Instruct": (0, 0),
     "meta-llama/Meta-Llama-3-405B-Instruct": (0, 0),
     "meta-llama/Meta-Llama-3.1-8B": (0, 0),
+    "llama-3-1-8b-instruct": (0, 0),
+    "llama-3-1-70b-instruct": (0, 0),
     "meta-llama/Meta-Llama-3-8B": (0, 0),
 }
 
@@ -85,6 +90,7 @@ CLIENT_STR_TO_GENERATE_FN = {
     "vllm-chat": generate_vllm_chat_completions,
     "vllm-completion": generate_vllm_completions,
     "internal": generate_internal_completions,
+    "llmengine-chat": generate_llm_engine_chat_completion,
 }
 
 BATCH_CLIENT_FNS = {
@@ -101,13 +107,14 @@ def is_chat(model_name: str):
     return MODEL_NAME_TO_CLIENT_STR[model_name][0] not in IS_COMPLETION_CLIENT_FNS
 
 class LLMQuerier(ABC):
-    def __init__(self, log_directory: Optional[str] = None, cache_file: Optional[str] = "cache.json") -> None:
+    def __init__(self, log_directory: Optional[str] = None, cache_file: Optional[str] = "cache.json", batch_size: Optional[int] = None) -> None:
         self.log_directory = log_directory
         self.clients = {}
         self.current_price = 0.
         self.next_print_price = PRINT_EVERY_X_DOLLARS
 
         self.cache_file = cache_file
+        self.batch_size = batch_size
 
         if self.cache_file is not None:
             Path(os.path.dirname(self.cache_file)).mkdir(parents=True, exist_ok=True)
@@ -153,6 +160,7 @@ class LLMQuerier(ABC):
             temperature=temperature,
             top_p=top_p,
             next_idx_for_requery=self.next_idx_for_requery if requery else None,
+            batch_size=self.batch_size,
         )
         self.log(prompts, completions, log_name=log_name)
         print("done")
@@ -220,7 +228,7 @@ def cache_hash(model: str, message: Prompt, frequency_penalty: Optional[float], 
 
 
 # Threaded generation code adapted from Federico Cassano
-def _generate_completions(client: Union[openai.OpenAI, anthropic.Anthropic], model: str, messages: Union[list[Prompt], tuple[Prompt, ...]], current_cache: dict[str, dict[str, Any]], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], next_idx_for_requery: Optional[dict[str, int]] = None) -> tuple[list[Completion], float]:
+def _generate_completions(client: Union[openai.OpenAI, anthropic.Anthropic], model: str, messages: Union[list[Prompt], tuple[Prompt, ...]], current_cache: dict[str, dict[str, Any]], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], next_idx_for_requery: Optional[dict[str, int]] = None, batch_size: Optional[int] = None) -> tuple[list[Completion], float]:
     if not isinstance(messages, (list, tuple)):
         raise ValueError("messages must be a list or tuple")
     assert len(messages)
@@ -261,47 +269,58 @@ def _generate_completions(client: Union[openai.OpenAI, anthropic.Anthropic], mod
             to_generate.append((prompt, i))
             input_tokens += num_tokens_for_convo(prompt, is_chat)
 
-    if MODEL_NAME_TO_CLIENT_STR[model][0] in BATCH_CLIENT_FNS:
-        to_generate_prompts = [prompt for prompt, _ in to_generate]
-        if len(to_generate_prompts):
-            genned_completions = completion_generator_fn(
-                client=client,
-                model=model,
-                prompts=to_generate_prompts,
-                frequency_penalty=frequency_penalty,
-                logit_bias=logit_bias,
-                max_tokens=max_tokens,
-                presence_penalty=presence_penalty,
-                seed=seed,
-                stop=stop,
-                temperature=temperature,
-                top_p=top_p,
-            )
-            for (_, i), completion in zip(to_generate, genned_completions):
-                completions[i] = completion
+    if batch_size is None:
+        to_generate_chunked = [to_generate]
     else:
-        def generate_completion(prompt: list[dict[str, str]], i: int):
-            completions[i] = completion_generator_fn(
-                    client=client,
-                    model=model,
-                    prompt=prompt,
-                    frequency_penalty=frequency_penalty,
-                    logit_bias=logit_bias,
-                    max_tokens=max_tokens,
-                    presence_penalty=presence_penalty,
-                    seed=seed,
-                    stop=stop,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
-        for prompt, i in to_generate:
-            thread = threading.Thread(
-                target=generate_completion, args=(prompt, i))
-            threads.append(thread)
-            thread.start()
+        assert batch_size > 0
+        to_generate_chunked = list(chunk(to_generate, batch_size))
+    with tqdm(total=len(to_generate)) as pbar:
+        for chunk_of_generate in to_generate_chunked:
+            if MODEL_NAME_TO_CLIENT_STR[model][0] in BATCH_CLIENT_FNS:
+                to_generate_prompts = [prompt for prompt, _ in chunk_of_generate]
+                if len(to_generate_prompts):
+                    genned_completions = completion_generator_fn(
+                        client=client,
+                        model=model,
+                        prompts=to_generate_prompts,
+                        frequency_penalty=frequency_penalty,
+                        logit_bias=logit_bias,
+                        max_tokens=max_tokens,
+                        presence_penalty=presence_penalty,
+                        seed=seed,
+                        stop=stop,
+                        temperature=temperature,
+                        top_p=top_p,
+                    )
+                    for (_, i), completion in zip(chunk_of_generate, genned_completions):
+                        completions[i] = completion
+                        pbar.update(1)
 
-        for thread in threads:
-            thread.join()
+            else:
+                def generate_completion(prompt: list[dict[str, str]], i: int):
+                    completions[i] = completion_generator_fn(
+                            client=client,
+                            model=model,
+                            prompt=prompt,
+                            frequency_penalty=frequency_penalty,
+                            logit_bias=logit_bias,
+                            max_tokens=max_tokens,
+                            presence_penalty=presence_penalty,
+                            seed=seed,
+                            stop=stop,
+                            temperature=temperature,
+                            top_p=top_p,
+                        )
+                    pbar.update(1)
+
+                for prompt, i in chunk_of_generate:
+                    thread = threading.Thread(
+                        target=generate_completion, args=(prompt, i))
+                    threads.append(thread)
+                    thread.start()
+
+                for thread in threads:
+                    thread.join()
 
     assert all(c is not None for c in completions), "Some completions are missing -- threading bug?"
 
@@ -320,8 +339,9 @@ def _generate_completions(client: Union[openai.OpenAI, anthropic.Anthropic], mod
 
 if __name__ == "__main__":
     print("starting basic query...")
-    llmq = LLMQuerier("temp_logs", None)
+    llmq = LLMQuerier("temp_logs", None, 10)
     # print(llmq.generate("meta-llama/Meta-Llama-3-405B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("meta-llama/Meta-Llama-3-8B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
-    print(llmq.generate("claude-3-5-sonnet-20240620", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
+    # print(llmq.generate("claude-3-5-sonnet-20240620", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
+    print(llmq.generate("gpt-4o-mini", [[{"role": "user", "content": "Please count to 10."}]] * 10, max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("claude-3-5-sonnet-20240620", ["What is up?"], max_tokens=1000, temperature=0.1, top_p=0.9))

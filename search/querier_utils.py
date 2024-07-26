@@ -3,9 +3,11 @@ import openai
 from vllm import SamplingParams, LLM
 import tiktoken
 from transformers import AutoTokenizer
+from llmengine import Completion as LLMEngineCompletion
+from llmengine.errors import UnknownError, BadRequestError
 
 import requests
-from typing import Optional, Union
+from typing import Optional, Union, Any
 import json
 import time
 from httpcore import ReadError
@@ -16,7 +18,7 @@ from coderm.model import Completion, logprobs_to_cumulative
 from python_utils import random_print
 
 
-MAX_TIMEOUT = 2.5 * 60 + 1e-4
+MAX_TIMEOUT = 4 * 60 + 1e-4
 START_TIMEOUT = 30
 JITTER_FACTOR = 3/4
 PRINT_P = 1e-2
@@ -217,3 +219,46 @@ def generate_internal_completions(client: AutoTokenizer, model: str, prompt: lis
 
     output_dict = json.loads(response.content)
     return Completion(output_dict["text"], -1, output_dict["count_output_tokens"])
+
+def generate_llm_engine_chat_completion(client: AutoTokenizer, model: str, prompt: list[dict[str, str]], frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], **kwargs) -> Completion:
+    tokenizer = client
+    chat_msgs_as_str = tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
+    return generate_llm_engine_completion(client, model, chat_msgs_as_str, frequency_penalty=frequency_penalty, max_tokens=max_tokens, presence_penalty=presence_penalty, seed=seed, stop=stop, temperature=temperature, top_p=top_p)
+
+def generate_llm_engine_completion(client: Any, model: str, prompt: str, frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], **kwargs) -> Completion:
+    if seed is not None:
+        print("Warning: seed is not used")
+    curr_backoff = START_TIMEOUT
+    while 1:
+        try:
+            completion = LLMEngineCompletion.create(model=model, prompt=prompt,
+                                    frequency_penalty=frequency_penalty,
+                                    max_new_tokens=max_tokens,
+                                    presence_penalty=presence_penalty,
+                                    stop_sequences=stop,
+                                    temperature=temperature,
+                                    top_p=top_p,
+                                    return_token_log_probs=True,
+                                    )
+            break
+        except UnknownError as e:
+            print(f"Unknown LLMEngine Error: {e}")
+        except BadRequestError as e:
+            print(f"Bad Request Error (LLMEngine): {e}")
+            print("^ Prompt:", prompt)
+        except requests.exceptions.ReadTimeout as e:
+            print(f"Read Timeout Error: {e}")
+        except requests.exceptions.ConnectionError as e:
+            print(f"Connection Error: {e}")
+        except requests.exceptions.RequestException as e:
+            print(f"Other Request Exception: {e}")
+
+        curr_backoff = min(MAX_TIMEOUT, curr_backoff * 1.75 + random.random() * JITTER_FACTOR * curr_backoff)
+        print(f"Requerying in {curr_backoff} seconds.")
+        time.sleep(curr_backoff)
+
+    o = completion.output.text
+    logprobs = [lp.log_prob for lp in completion.output.tokens]
+    num_tok = len(logprobs)
+    cumulative_logprob = logprobs_to_cumulative(logprobs)
+    return Completion(o, cumulative_logprob, num_tok)
