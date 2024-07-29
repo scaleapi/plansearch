@@ -60,9 +60,12 @@ Return Result: The number of characters that need to be appended to s is returne
 
 
 # Adapted from CodeRM's prompting code
-def user_content_chat(question: str, starter_code: str = "", use_cot: bool = False, use_few_shot: bool = True) -> str:
+def user_content_chat(question: str, starter_code: str = "", use_cot: bool = False, num_shot: int = 2) -> str:
     og_q = question.replace('"""', r'\"""')
     out_str = ""
+
+    assert num_shot >= 0
+    use_few_shot = num_shot != 0
 
     if use_few_shot:
         if starter_code == "" or starter_code is None:
@@ -72,7 +75,7 @@ def user_content_chat(question: str, starter_code: str = "", use_cot: bool = Fal
 
         out_str += f"You will given a competitive programming problem; please output correct Python code to solve it. Below are examples:\n\n\n"
 
-        for shot in shots_arr:
+        for shot in shots_arr[:num_shot]:
             out_str += f"Example question:\n\n{shot['question']}\n\nExample output:\n\n"
             if use_cot:
                 out_str += f"{shot['cot']}\n\n"
@@ -92,9 +95,12 @@ def user_content_chat(question: str, starter_code: str = "", use_cot: bool = Fal
     return out_str
 
 
-def user_content_completion(question: str, starter_code: str = "", use_cot: bool = False, use_few_shot: bool = True) -> str:
+def user_content_completion(question: str, starter_code: str = "", use_cot: bool = False, num_shot: int = 2) -> str:
     og_q = question.replace('"""', r'\"""')
     out_str = "# START NEW CODE\n"
+
+    assert num_shot >= 0
+    use_few_shot = num_shot != 0
 
     if use_few_shot:
         if starter_code == "" or starter_code is None:
@@ -102,7 +108,7 @@ def user_content_completion(question: str, starter_code: str = "", use_cot: bool
         else:
             shots_arr = LCB_FN_FEWSHOT
 
-        for shot in shots_arr:
+        for shot in shots_arr[:num_shot]:
             out_str += f'"""\n{shot["question"]}\n"""\n'
             if use_cot:
                 out_str += f"{shot['cot']}\n\n"

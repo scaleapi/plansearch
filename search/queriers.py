@@ -15,6 +15,7 @@ from pathlib import Path
 import time
 from httpcore import ReadError
 import random
+import warnings
 
 from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
@@ -47,12 +48,13 @@ MODEL_NAME_TO_CLIENT_STR = {
     "gpt-4o-mini": ("OpenAI", openai.OpenAI, {}),
     "gpt-3.5-turbo-instruct": ("OpenAI-completion", openai.OpenAI, {}),
     "claude-3-5-sonnet-20240620": ("Anthropic", anthropic.Anthropic, {}),
-    "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct": ("vllm-chat", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 4, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
+    "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct": ("vllm-chat", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
     "deepseek-ai/DeepSeek-Coder-V2-Lite-Base": ("vllm-completion", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Lite-Base", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 4, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
     "deepseek-ai/DeepSeek-Coder-V2-Instruct": ("vllm-chat", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
     "deepseek-ai/DeepSeek-Coder-V2-Base": ("vllm-completion", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Base", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
     "meta-llama/Meta-Llama-3-8B-Instruct": ("vllm-chat", LLM, {"model": "meta-llama/Meta-Llama-3-8B-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
     "meta-llama/Meta-Llama-3.1-8B": ("vllm-completion", LLM, {"model": "meta-llama/Meta-Llama-3.1-8B", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
+    # "meta-llama/Meta-Llama-3.1-8B-Instruct": ("vllm-chat", LLM, {"model": "meta-llama/Meta-Llama-3.1-8B-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
     "llama-3-1-8b-instruct": ("llmengine-chat", AutoTokenizer.from_pretrained, {"pretrained_model_name_or_path": "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
     "llama-3-1-70b-instruct": ("llmengine-chat", AutoTokenizer.from_pretrained, {"pretrained_model_name_or_path": "meta-llama/Meta-Llama-3.1-70B-Instruct"}),
     "meta-llama/Meta-Llama-3-8B": ("vllm-completion", LLM, {"model": "meta-llama/Meta-Llama-3-8B", "trust_remote_code": True, "gpu_memory_utilization": 0.8, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
@@ -77,6 +79,7 @@ MODEL_NAME_TO_INPUT_OUTPUT_PRICE = {
     "meta-llama/Meta-Llama-3-8B-Instruct": (0, 0),
     "meta-llama/Meta-Llama-3-405B-Instruct": (0, 0),
     "meta-llama/Meta-Llama-3.1-8B": (0, 0),
+    "meta-llama/Meta-Llama-3.1-8B-Instruct": (0, 0),
     "llama-3-1-8b-instruct": (0, 0),
     "llama-3-1-70b-instruct": (0, 0),
     "meta-llama/Meta-Llama-3-8B": (0, 0),
@@ -101,9 +104,29 @@ IS_COMPLETION_CLIENT_FNS = {
     "vllm-completion", "OpenAI-completion"
 }
 
-def is_chat(model_name: str):
+
+def add_custom_model(model_name: str, completion_format: Optional[str] = None):
+    if completion_format is None:
+        completion_format = 'chat' if ('chat' in model_name.lower() or 'instruct' in model_name.lower()) else 'completion'
+        warnings.warn("completion_format was None on a custom model. Automatically assigning.")
+    assert completion_format in {"chat", "completion"}
+
+    if completion_format == 'chat':
+        MODEL_NAME_TO_CLIENT_STR[model_name] = MODEL_NAME_TO_CLIENT_STR["custom-chat"]
+        MODEL_NAME_TO_CLIENT_STR[model_name][2]["model"] = model_name
+        MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model_name] = (0, 0)
+    else:
+        MODEL_NAME_TO_CLIENT_STR[model_name] = MODEL_NAME_TO_CLIENT_STR["custom-completion"]
+        MODEL_NAME_TO_CLIENT_STR[model_name][2]["model"] = model_name
+        MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model_name] = (0, 0)
+
+    print(f"Assigning format of {model_name} to {completion_format}.")
+
+
+def is_chat(model_name: str, completion_format: Optional[str] = None):
     if model_name not in MODEL_NAME_TO_CLIENT_STR:
-        return "chat" in model_name.lower() or "instruct" in model_name.lower()
+        add_custom_model(model_name, completion_format)
+
     return MODEL_NAME_TO_CLIENT_STR[model_name][0] not in IS_COMPLETION_CLIENT_FNS
 
 class LLMQuerier(ABC):
@@ -134,16 +157,9 @@ class LLMQuerier(ABC):
         self.next_idx_for_requery = {}
 
 
-    def generate_with_info(self, model: str, prompts: list[Prompt], frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = False, log_name: str = "") -> list[Completion]:
+    def generate_with_info(self, model: str, prompts: list[Prompt], completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = False, log_name: str = "") -> list[Completion]:
         if model not in MODEL_NAME_TO_CLIENT_STR:
-            if is_chat(model):
-                MODEL_NAME_TO_CLIENT_STR[model] = MODEL_NAME_TO_CLIENT_STR["custom-chat"]
-                MODEL_NAME_TO_CLIENT_STR[model][2]["model"] = model
-                MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model] = (0, 0)
-            else:
-                MODEL_NAME_TO_CLIENT_STR[model] = MODEL_NAME_TO_CLIENT_STR["custom-completion"]
-                MODEL_NAME_TO_CLIENT_STR[model][2]["model"] = model
-                MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model] = (0, 0)
+            add_custom_model(model, completion_format)
 
         if model not in self.clients:
             self.clients[model] = MODEL_NAME_TO_CLIENT_STR[model][1](**MODEL_NAME_TO_CLIENT_STR[model][2])
@@ -175,8 +191,8 @@ class LLMQuerier(ABC):
 
         return completions
 
-    def generate(self, model: str, prompts: list[Prompt], frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = False, log_name: str = "") -> list[str]:
-        generations = self.generate_with_info(model, prompts,
+    def generate(self, model: str, prompts: list[Prompt], completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = False, log_name: str = "") -> list[str]:
+        generations = self.generate_with_info(model, prompts, completion_format=completion_format,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,

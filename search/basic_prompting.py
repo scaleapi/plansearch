@@ -14,13 +14,15 @@ from parsing_utils import markdown_codeblock_extract
 
 
 class BasicPromptingModel(SearchModel):
-    def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, use_cot: bool = False, use_sys_prompts: bool = True, use_few_shot: bool = True, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
+    def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, use_cot: bool = False, use_sys_prompts: bool = True, num_shot: int = 2, completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
         super().__init__(model_name, experiment_directory=experiment_directory, cache_file=cache_file)
 
-        self.is_chat = is_chat(model_name)
+        self.is_chat = is_chat(model_name, completion_format)
         self.use_cot = use_cot
         self.use_sys_prompts = use_sys_prompts
-        self.use_few_shot = use_few_shot
+        self.num_shot = num_shot
+
+        self.completion_format = completion_format
 
         self.frequency_penalty = frequency_penalty
         self.logit_bias = logit_bias
@@ -45,6 +47,7 @@ class BasicPromptingModel(SearchModel):
 
         generated = self.querier.generate(self.model_name, 
                               problem_prompts,
+                              completion_format=self.completion_format,
                               frequency_penalty=self.frequency_penalty,
                               logit_bias=self.logit_bias,
                               max_tokens=self.max_tokens,
@@ -73,10 +76,10 @@ class SimplePromptModel(BasicPromptingModel):
                 else:
                     convo.append({"role": "system", "content": self.prompts.SYSTEM_PROMPT})
 
-            convo.append({"role": "user", "content": self.prompts.user_content_chat(problem.problem_str, problem.starter_code, use_cot=self.use_cot, use_few_shot=self.use_few_shot)})
+            convo.append({"role": "user", "content": self.prompts.user_content_chat(problem.problem_str, problem.starter_code, use_cot=self.use_cot, num_shot=self.num_shot)})
             return convo
         else:
-            out_str = self.prompts.user_content_completion(problem.problem_str, problem.starter_code, use_cot=self.use_cot, use_few_shot=self.use_few_shot)
+            out_str = self.prompts.user_content_completion(problem.problem_str, problem.starter_code, use_cot=self.use_cot, num_shot=self.num_shot)
             return out_str
 
 
@@ -115,10 +118,17 @@ def add_basic_prompting_args(parser: argparse.ArgumentParser):
         help="Whether to cancel sys prompts"
     )
     parser.add_argument(
-        "--zero-shot",
-        action="store_true",
-        help="Whether to do zero shot instead"
+        "--num-shots",
+        type=int,
+        default=2,
+        help="Number of shots to pre-prompt model",
+    )
+    parser.add_argument(
+        "--format",
+        type=str,
+        default=None,
+        help="Format of model if custom. Choose between 'chat' and 'completion'"
     )
     
 def get_basic_prompting_model(args: argparse.Namespace) -> SearchModel:
-    return SimplePromptModel(args.model, experiment_directory=args.experiment_directory, cache_file=args.cache_file, use_cot=args.cot, use_sys_prompts=not args.no_sys_prompt, use_few_shot=not args.zero_shot, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
+    return SimplePromptModel(args.model, experiment_directory=args.experiment_directory, cache_file=args.cache_file, use_cot=args.cot, use_sys_prompts=not args.no_sys_prompt, num_shot=args.num_shots, completion_format=args.format, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)

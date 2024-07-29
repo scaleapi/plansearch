@@ -9,7 +9,7 @@ from parsing_utils import markdown_codeblock_extract
 
 class SimpleIdeaModel(SearchModel):
     import prompts.idea_prompts as prompts
-    def __init__(self, idea_model: str, code_model: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None, use_few_shot: bool = True):
+    def __init__(self, idea_model: str, code_model: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None, use_few_shot: bool = True, use_sys_prompt: bool = True, num_words: Optional[int] = None):
         super().__init__("simple_idea", experiment_directory=experiment_directory, cache_file=cache_file)
 
         self.idea_model = idea_model
@@ -25,10 +25,14 @@ class SimpleIdeaModel(SearchModel):
         self.idea_temperature = idea_temperature
         self.top_p = top_p
         self.use_few_shot = use_few_shot
+        self.use_sys_prompt = use_sys_prompt
+        self.num_words = num_words
 
     def get_nl_sols_prompt(self, problem: Problem) -> list[dict[str, str]]:
-        convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_TRANSLATE},
-                 {"role": "user", "content": self.prompts.get_nl_solution(problem.problem_str, problem.has_starter_code(), use_few_shot=self.use_few_shot)}]
+        convo = []
+        if self.use_sys_prompt:
+            convo.append({"role": "system", "content": self.prompts.SYSTEM_PROMPT_TRANSLATE})
+        convo.append({"role": "user", "content": self.prompts.get_nl_solution(problem.problem_str, problem.has_starter_code(), use_few_shot=self.use_few_shot, num_words=self.num_words)})
         return convo
     
     def nl_to_code_solution_prompt(self, problem: Problem, nl_solution: str) -> list[dict[str, str]]:
@@ -106,6 +110,17 @@ def add_simple_idea_args(parser: argparse.ArgumentParser):
         action="store_true",
         help="Whether to do zero shot instead"
     )
+    parser.add_argument(
+        "--no-sys-prompt",
+        action="store_true",
+        help="Whether to include system prompts"
+    )
+    parser.add_argument(
+        "--num-words",
+        type=int,
+        default=None,
+        help="Rough number of words to use in the idea"
+    )
 
 def get_simple_idea_model(args: argparse.Namespace) -> SearchModel:
-    return SimpleIdeaModel(args.idea_model, args.code_model, args.experiment_directory, cache_file=args.cache_file, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, use_few_shot=not args.zero_shot)
+    return SimpleIdeaModel(args.idea_model, args.code_model, args.experiment_directory, cache_file=args.cache_file, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, use_few_shot=not args.zero_shot, use_sys_prompt=not args.no_sys_prompt, num_words=args.num_words)

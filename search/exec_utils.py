@@ -1,4 +1,5 @@
 from typing import Optional, Union, Any
+import os
 
 from fn import Function, get_all_descendant_impls
 from base_classes import Test
@@ -20,7 +21,7 @@ def get_passed_tests_and_errors(
             str_errors.add(test_result[1])
     return passed_tests, str_errors
 
-def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeouts: list[int]) -> list[tuple[bool, str]]:
+def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeouts: list[int], num_workers: int = os.cpu_count()) -> list[tuple[bool, str]]:
     assert len(impls) == len(tests_per_code) == len(timeouts)
 
     inputs_pc = [[test.get_input_no_kwargs() for test in tests] for tests in tests_per_code]
@@ -42,11 +43,12 @@ def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeo
     for inputs in inputs_pc:
         if len(inputs) == 0:
             print("Warning: empty input test case found.")
-    return smart_exec_tests_queuebatched(impls, test_dicts, timeouts=timeouts)
+    return smart_exec_tests_queuebatched(impls, test_dicts, timeouts=timeouts, workers=num_workers, #testbank="codegenning/livecodebench_lite_v2_testbank_ree"
+                                         )
 
 
-def run_tests(impl: str, tests: list[Test], timeout: int) -> tuple[bool, str]:
-    return run_tests_per_code([impl], [tests], [timeout])[0]
+def run_tests(impl: str, tests: list[Test], timeout: int, num_workers: int = os.cpu_count()) -> tuple[bool, str]:
+    return run_tests_per_code([impl], [tests], [timeout], num_workers=num_workers)[0]
 
 
 def check_fn(

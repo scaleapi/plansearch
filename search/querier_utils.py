@@ -190,8 +190,8 @@ def generate_vllm_completions(client: LLM, model: str, prompts: list[str], frequ
         seed=seed,
         max_tokens=max_tokens,
         stop=stop,
-        temperature=temperature,
-        top_p=top_p,
+        temperature=0.0 if temperature is None else temperature,
+        top_p=0.9 if top_p is None else top_p ,
     )
     outputs = client.generate(prompts, sampling_params=sampling_params)
     return [Completion(output.outputs[0].text, output.outputs[0].cumulative_logprob, len(output.outputs[0].token_ids)) for output in outputs]

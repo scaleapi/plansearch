@@ -131,7 +131,7 @@ class Problem:
 
 
 class SearchModel(BaseModel, ABC):
-    def __init__(self, model_name: str, experiment_directory: str = None, cache_file: str = None, querier_batch_size: Optional[int] = 32768):
+    def __init__(self, model_name: str, experiment_directory: str = None, cache_file: str = None, querier_batch_size: Optional[int] = 16384):
         super().__init__(model_name)
         self.experiment_directory = (experiment_directory if experiment_directory is not None 
                                      else f"logs/{datetime.datetime.now().strftime('%m%dT%H%M%S')}_{model_name}")
