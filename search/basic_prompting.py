@@ -14,10 +14,10 @@ from parsing_utils import markdown_codeblock_extract
 
 
 class BasicPromptingModel(SearchModel):
-    def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, use_cot: bool = False, use_sys_prompts: bool = True, num_shot: int = 2, completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
-        super().__init__(model_name, experiment_directory=experiment_directory, cache_file=cache_file)
+    def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, use_cot: bool = False, use_sys_prompts: bool = True, num_shot: int = 2, completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, num_gpus=8):
+        super().__init__(model_name, experiment_directory=experiment_directory, cache_file=cache_file, num_gpus=num_gpus)
 
-        self.is_chat = is_chat(model_name, completion_format)
+        self.is_chat = is_chat(model_name, completion_format, num_gpus=num_gpus)
         self.use_cot = use_cot
         self.use_sys_prompts = use_sys_prompts
         self.num_shot = num_shot
@@ -131,4 +131,4 @@ def add_basic_prompting_args(parser: argparse.ArgumentParser):
     )
     
 def get_basic_prompting_model(args: argparse.Namespace) -> SearchModel:
-    return SimplePromptModel(args.model, experiment_directory=args.experiment_directory, cache_file=args.cache_file, use_cot=args.cot, use_sys_prompts=not args.no_sys_prompt, num_shot=args.num_shots, completion_format=args.format, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
+    return SimplePromptModel(args.model, experiment_directory=args.experiment_directory, cache_file=args.cache_file, use_cot=args.cot, use_sys_prompts=not args.no_sys_prompt, num_shot=args.num_shots, completion_format=args.format, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, num_gpus=args.num_gpus)

@@ -52,6 +52,13 @@ def add_universal_args(parser: argparse.ArgumentParser):
         help="Directory to cache generations. (Default: None, to not cache generations.)"
     )
 
+    parser.add_argument(
+        "--num-gpus",
+        type=int,
+        default=8,
+        help="Number of GPUs to use"
+    )
+
 
 def add_useless_args(args: argparse.Namespace):
     args.max_tokens = -1

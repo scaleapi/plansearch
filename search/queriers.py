@@ -105,7 +105,7 @@ IS_COMPLETION_CLIENT_FNS = {
 }
 
 
-def add_custom_model(model_name: str, completion_format: Optional[str] = None):
+def add_custom_model(model_name: str, completion_format: Optional[str] = None, num_gpus=8):
     if completion_format is None:
         completion_format = 'chat' if ('chat' in model_name.lower() or 'instruct' in model_name.lower()) else 'completion'
         warnings.warn("completion_format was None on a custom model. Automatically assigning.")
@@ -120,17 +120,19 @@ def add_custom_model(model_name: str, completion_format: Optional[str] = None):
         MODEL_NAME_TO_CLIENT_STR[model_name][2]["model"] = model_name
         MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model_name] = (0, 0)
 
+    MODEL_NAME_TO_CLIENT_STR[model_name][2]["tensor_parallel_size"] = num_gpus
+
     print(f"Assigning format of {model_name} to {completion_format}.")
 
 
-def is_chat(model_name: str, completion_format: Optional[str] = None):
+def is_chat(model_name: str, completion_format: Optional[str] = None, num_gpus=8):
     if model_name not in MODEL_NAME_TO_CLIENT_STR:
-        add_custom_model(model_name, completion_format)
+        add_custom_model(model_name, completion_format, num_gpus)
 
     return MODEL_NAME_TO_CLIENT_STR[model_name][0] not in IS_COMPLETION_CLIENT_FNS
 
 class LLMQuerier(ABC):
-    def __init__(self, log_directory: Optional[str] = None, cache_file: Optional[str] = "cache.json", batch_size: Optional[int] = None) -> None:
+    def __init__(self, log_directory: Optional[str] = None, cache_file: Optional[str] = "cache.json", batch_size: Optional[int] = None, num_gpus=8) -> None:
         self.log_directory = log_directory
         self.clients = {}
         self.current_price = 0.
@@ -138,6 +140,7 @@ class LLMQuerier(ABC):
 
         self.cache_file = cache_file
         self.batch_size = batch_size
+        self.num_gpus = num_gpus
 
         if self.cache_file is not None:
             Path(os.path.dirname(self.cache_file)).mkdir(parents=True, exist_ok=True)
@@ -159,7 +162,7 @@ class LLMQuerier(ABC):
 
     def generate_with_info(self, model: str, prompts: list[Prompt], completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = False, log_name: str = "") -> list[Completion]:
         if model not in MODEL_NAME_TO_CLIENT_STR:
-            add_custom_model(model, completion_format)
+            add_custom_model(model, completion_format, self.num_gpus)
 
         if model not in self.clients:
             self.clients[model] = MODEL_NAME_TO_CLIENT_STR[model][1](**MODEL_NAME_TO_CLIENT_STR[model][2])

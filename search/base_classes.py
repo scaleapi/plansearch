@@ -131,11 +131,11 @@ class Problem:
 
 
 class SearchModel(BaseModel, ABC):
-    def __init__(self, model_name: str, experiment_directory: str = None, cache_file: str = None, querier_batch_size: Optional[int] = 16384):
+    def __init__(self, model_name: str, experiment_directory: str = None, cache_file: str = None, querier_batch_size: Optional[int] = 16384, num_gpus: int = 8):
         super().__init__(model_name)
         self.experiment_directory = (experiment_directory if experiment_directory is not None 
                                      else f"logs/{datetime.datetime.now().strftime('%m%dT%H%M%S')}_{model_name}")
-        self.querier = LLMQuerier(os.path.join(self.experiment_directory, "queries"), cache_file=cache_file, batch_size=querier_batch_size)
+        self.querier = LLMQuerier(os.path.join(self.experiment_directory, "queries"), cache_file=cache_file, batch_size=querier_batch_size, num_gpus=num_gpus)
 
     def format_prompt(self, question: str, code: str = "", public_tests: Optional[dict[str, Any]] = None, tests: Optional[dict[str, Any]] = None, solutions: Optional[list[str]] = None) -> str | list[dict[str, str]]:
         print("Warning: `format_prompt` is misused right now.")
