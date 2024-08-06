@@ -1,4 +1,4 @@
-from fn import Function
+from search.fn import Function
 
 
 def description_comment_helper(description: str) -> str:

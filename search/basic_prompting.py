@@ -1,28 +1,24 @@
 from abc import ABC, abstractmethod
 from typing import List, Any, Optional, Union
 import argparse
-import os
-import datetime
 from pathlib import Path
-import json
-import shutil
 
-from base_classes import Problem, SearchModel
+from search.base_classes import Problem, SearchModel
 from coderm.prompts import Prompt
-from queriers import MODEL_NAME_TO_CLIENT_STR, is_chat
-from parsing_utils import markdown_codeblock_extract
+from search.parsing_utils import markdown_codeblock_extract
 
 
 class BasicPromptingModel(SearchModel):
-    def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, use_cot: bool = False, use_sys_prompts: bool = True, num_shot: int = 2, completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, num_gpus=8):
-        super().__init__(model_name, experiment_directory=experiment_directory, cache_file=cache_file, num_gpus=num_gpus)
+    def __init__(self, model_config_path: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, querier_batch_size: Optional[int] = 12_288, use_cot: bool = False, use_sys_prompts: bool = True, num_shot: int = 2, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
+        super().__init__(model_config_path, experiment_directory=experiment_directory, cache_file=cache_file, querier_batch_size=querier_batch_size)
 
-        self.is_chat = is_chat(model_name, completion_format, num_gpus=num_gpus)
+        self.querier.add_client(model_config_path)
+        self.model_config_path = model_config_path
+
+        self.is_chat = self.querier.clients[model_config_path].is_chat
         self.use_cot = use_cot
         self.use_sys_prompts = use_sys_prompts
         self.num_shot = num_shot
-
-        self.completion_format = completion_format
 
         self.frequency_penalty = frequency_penalty
         self.logit_bias = logit_bias
@@ -45,9 +41,8 @@ class BasicPromptingModel(SearchModel):
             stop = [] if stop is None else stop
             stop += ["# START NEW CODE"]
 
-        generated = self.querier.generate(self.model_name, 
+        generated = self.querier.generate(self.model_config_path, 
                               problem_prompts,
-                              completion_format=self.completion_format,
                               frequency_penalty=self.frequency_penalty,
                               logit_bias=self.logit_bias,
                               max_tokens=self.max_tokens,
@@ -66,7 +61,7 @@ class BasicPromptingModel(SearchModel):
 
 
 class SimplePromptModel(BasicPromptingModel):
-    import prompts.simple_prompts as prompts
+    import search.prompts.simple_prompts as prompts
     def format_problem_to_prompt(self, problem: Problem) -> Prompt:
         if self.is_chat:
             convo = []
@@ -85,9 +80,9 @@ class SimplePromptModel(BasicPromptingModel):
 
 def add_basic_prompting_args(parser: argparse.ArgumentParser):
     parser.add_argument(
-        "--model",
+        "--model-config-path",
         required=True,
-        help="Model to use"
+        help="Model config to use"
     )
     parser.add_argument(
         "--max-tokens",
@@ -123,12 +118,6 @@ def add_basic_prompting_args(parser: argparse.ArgumentParser):
         default=2,
         help="Number of shots to pre-prompt model",
     )
-    parser.add_argument(
-        "--format",
-        type=str,
-        default=None,
-        help="Format of model if custom. Choose between 'chat' and 'completion'"
-    )
     
 def get_basic_prompting_model(args: argparse.Namespace) -> SearchModel:
-    return SimplePromptModel(args.model, experiment_directory=args.experiment_directory, cache_file=args.cache_file, use_cot=args.cot, use_sys_prompts=not args.no_sys_prompt, num_shot=args.num_shots, completion_format=args.format, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, num_gpus=args.num_gpus)
+    return SimplePromptModel(args.model_config_path, experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, use_cot=args.cot, use_sys_prompts=not args.no_sys_prompt, num_shot=args.num_shots, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)

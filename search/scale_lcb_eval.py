@@ -8,18 +8,18 @@ from pathlib import Path
 from coderm.eval import livecodebench_eval
 from coderm.eval.generic import get_generic_coderm_argparser
 
-from basic_prompting import add_basic_prompting_args, get_basic_prompting_model
-from backtranslate import add_backtranslate_args, get_backtranslate_model
-from simple_filter_models import (
+from search.basic_prompting import add_basic_prompting_args, get_basic_prompting_model
+from search.backtranslate import add_backtranslate_args, get_backtranslate_model
+from search.simple_filter_models import (
     add_simple_prompt_filter_args, get_simple_prompt_filter_model,
     add_idea_filter_args, get_idea_filter_model,
 )
-from simple_idea_model import add_simple_idea_args, get_simple_idea_model 
-from simple_observation_model import add_simple_observation_args, get_simple_observation_model
-from pseudocode_model import add_pseudocode_args, get_pseudocode_model
+from search.simple_idea_model import add_simple_idea_args, get_simple_idea_model 
+from search.simple_observation_model import add_simple_observation_args, get_simple_observation_model
+from search.pseudocode_model import add_pseudocode_args, get_pseudocode_model
 
-from parsel_model import add_parsel_args, get_parsel_model 
-from combo_observation_model import add_combo_observation_args, get_combo_observation_model
+from search.parsel_model import add_parsel_args, get_parsel_model 
+from search.combo_observation_model import add_combo_observation_args, get_combo_observation_model
 
 
 def noop_add_args(parser: argparse.ArgumentParser):

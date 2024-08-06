@@ -1,6 +1,6 @@
 from typing import Optional
 
-from prompts.simple_prompts import LCB_IO_FEWSHOT, LCB_FN_FEWSHOT
+from search.prompts.simple_prompts import LCB_IO_FEWSHOT, LCB_FN_FEWSHOT
 
 SYSTEM_PROMPT_TRANSLATE = ("You are an expert Python programmer. " +
                  "You will be given a question (problem specification) and a Python " +

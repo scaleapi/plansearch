@@ -1,5 +1,5 @@
-from prompts.simple_prompts import LCB_IO_FEWSHOT, LCB_FN_FEWSHOT
-from prompts.idea_prompts import SYSTEM_PROMPT_TRANSLATE, get_nl_solution
+from search.prompts.simple_prompts import LCB_IO_FEWSHOT, LCB_FN_FEWSHOT
+from search.prompts.idea_prompts import SYSTEM_PROMPT_TRANSLATE, get_nl_solution
 
 SYSTEM_PROMPT_PSEUDOCODE = ("You are an expert Python programmer. " +
                  "You will be given a question (problem specification) and a natural language " +

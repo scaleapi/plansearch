@@ -2,18 +2,17 @@ from typing import List, Any, Optional, Union
 import argparse
 import os
 
-from base_classes import Problem, SearchModel
-from queriers import MODEL_NAME_TO_CLIENT_STR
-from parsing_utils import markdown_codeblock_extract
+from search.base_classes import Problem, SearchModel
+from search.parsing_utils import markdown_codeblock_extract
 
 
 class SimpleObservationModel(SearchModel):
-    import prompts.simple_observation_prompts as prompts
-    def __init__(self, idea_model: str, code_model: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None):
-        super().__init__("observation", experiment_directory=experiment_directory, cache_file=cache_file)
+    import search.prompts.simple_observation_prompts as prompts
+    def __init__(self, idea_model_config_path: str, code_model_config_path: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, querier_batch_size: Optional[int] = 12_288, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None):
+        super().__init__("observation", experiment_directory=experiment_directory, cache_file=cache_file, querier_batch_size=querier_batch_size)
 
-        self.idea_model = idea_model
-        self.code_model = code_model
+        self.idea_model = idea_model_config_path
+        self.code_model = code_model_config_path
 
         self.frequency_penalty = frequency_penalty
         self.logit_bias = logit_bias
@@ -86,14 +85,14 @@ class SimpleObservationModel(SearchModel):
 
 def add_simple_observation_args(parser: argparse.ArgumentParser):
     parser.add_argument(
-        "--idea-model",
+        "--idea-model-config-path",
         required=True,
-        help="Model to use for ideas"
+        help="Model config to use for ideas"
     )
     parser.add_argument(
-        "--code-model",
+        "--code-model-config-path",
         required=True,
-        help="Model to use for implementation"
+        help="Model config to use for implementation"
     )
     parser.add_argument(
         "--max-tokens",
@@ -121,4 +120,4 @@ def add_simple_observation_args(parser: argparse.ArgumentParser):
     )
 
 def get_simple_observation_model(args: argparse.Namespace) -> SearchModel:
-    return SimpleObservationModel(args.idea_model, args.code_model, args.experiment_directory, cache_file=args.cache_file, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens)
+    return SimpleObservationModel(args.idea_model_config_path, args.code_model_config_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens)

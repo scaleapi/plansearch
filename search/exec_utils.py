@@ -1,13 +1,13 @@
-from typing import Optional, Union, Any
+from typing import Optional, Union
 import os
 
-from fn import Function, get_all_descendant_impls
-from base_classes import Test
+from search.fn import Function, get_all_descendant_impls
+from search.base_classes import Test
 from coderm.execution import smart_exec_tests_queuebatched
 
 
 def get_passed_tests_and_errors(
-    test_results: list[bool, str],
+    test_results: list[tuple[bool, str]],
     tests: list[Test],
 ) -> tuple[list[Test], set[str]]:
     assert len(test_results) == len(tests)
@@ -21,7 +21,8 @@ def get_passed_tests_and_errors(
             str_errors.add(test_result[1])
     return passed_tests, str_errors
 
-def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeouts: list[int], num_workers: int = os.cpu_count()) -> list[tuple[bool, str]]:
+
+def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeouts: list[int], num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> list[tuple[bool, str]]:
     assert len(impls) == len(tests_per_code) == len(timeouts)
 
     inputs_pc = [[test.get_input_no_kwargs() for test in tests] for tests in tests_per_code]
@@ -43,19 +44,21 @@ def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeo
     for inputs in inputs_pc:
         if len(inputs) == 0:
             print("Warning: empty input test case found.")
-    return smart_exec_tests_queuebatched(impls, test_dicts, timeouts=timeouts, workers=num_workers, #testbank="codegenning/livecodebench_lite_v2_testbank_ree"
-                                         )
+    return smart_exec_tests_queuebatched(impls, test_dicts, timeouts=timeouts, workers=num_workers, executor=executor, testbank=testbank)
 
 
-def run_tests(impl: str, tests: list[Test], timeout: int, num_workers: int = os.cpu_count()) -> tuple[bool, str]:
-    return run_tests_per_code([impl], [tests], [timeout], num_workers=num_workers)[0]
+def run_tests(impl: str, tests: list[Test], timeout: int, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> tuple[bool, str]:
+    return run_tests_per_code([impl], [tests], [timeout], num_workers=num_workers, testbank=testbank, executor=executor)[0]
 
 
 def check_fn(
     fn: Function,
-    timeout: float,
+    timeout: int,
     tests: Optional[list[Test]] = None,
-    separate: bool = False
+    separate: bool = False,
+    num_workers: Optional[int] = os.cpu_count(),
+    testbank: Optional[str] = None,
+    executor: str = "http://127.0.0.1:8000",
 ) -> Union[tuple[bool, str], list[tuple[bool, str]]]:
     """
     Evaluates `fn` with the fixed implementations, on the provided list of
@@ -74,11 +77,11 @@ def check_fn(
         timeouts = [timeout] * len(tests)
         separate_tests = [[test] for test in tests]
 
-        output_results = run_tests_per_code(impl_strs, separate_tests, timeouts=timeouts)
+        output_results = run_tests_per_code(impl_strs, separate_tests, timeouts=timeouts, num_workers=num_workers, testbank=testbank, executor=executor)
         assert len(output_results) == len(tests)
         return output_results
     else:
-        return run_tests(impl_str, tests, timeout)
+        return run_tests(impl_str, tests, timeout, num_workers=num_workers, testbank=testbank, executor=executor)
 
 if __name__ == "__main__":
     n_codes = 200

@@ -1,4 +1,4 @@
-from fn import Function
+from search.fn import Function
 
 def assert_check(line: str) -> bool:
     line = line.strip()

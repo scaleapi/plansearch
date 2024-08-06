@@ -1,7 +1,7 @@
 import os
-from parsel.parsel import parsel_graph
+from search.parsel.parsel import parsel_graph
 import argparse
-from prompts.parsel_prompts import (
+from search.prompts.parsel_prompts import (
     SOLUTION_PROMPT_FOR_COMPLETION,
     QUESTION_PREFIX,
     QUESTION_SUFFIX,
@@ -12,19 +12,19 @@ from prompts.parsel_prompts import (
 )
 from typing import Any, Union, Optional, Generator
 
-from python_utils import (
+from search.python_utils import (
     log_to_dir,
     safe_iter,
 )
-from parsing_utils import extract_code
+from search.parsing_utils import extract_code
 import traceback
 from copy import deepcopy
-from fn import get_all_descendant_impls, Function
-from base_classes import Test
-from parsel.construct_graph import get_root, get_graph
+from search.fn import get_all_descendant_impls, Function
+from search.base_classes import Test
+from search.parsel.construct_graph import get_root, get_graph
 
-from base_classes import Problem
-from queriers import LLMQuerier, MODELS_TO_METHOD
+from search.base_classes import Problem
+from search.queriers import LLMQuerier, MODELS_TO_METHOD
 
 
 def compute_parsel_output(problem: Problem, args: argparse.Namespace, querier: LLMQuerier, subdirectory: str) -> Optional[tuple[str, str]]:

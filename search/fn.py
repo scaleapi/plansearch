@@ -2,8 +2,8 @@ from __future__ import annotations
 from typing import Any, Optional, Union
 from collections import deque
 
-from base_classes import Test
-from python_utils import safe_repr
+from search.base_classes import Test
+from search.python_utils import safe_repr
 
 
 class Function:

@@ -6,9 +6,13 @@ import random
 import sys
 
 
+def fn_arg_join(args: list[Any]) -> str:
+    return ", ".join([repr(a) for a in args])
+
 def random_print(print_str: str, p: float = 1e-3):
+    print(print_str)
     if random.random() < p:
-        print(print_str)
+        print(print_str, "rand", p)
 
 T = TypeVar('T')
 def chunk(lst: list[T], n: int):
@@ -41,7 +45,7 @@ def wrap_list(potentially_iter: Any) -> list:
         return list(potentially_iter)
     return list(potentially_iter)
 
-def log_to_dir(base_dir: str, file_name_to_data: dict[str, Union[str, dict]]):
+def log_to_dir(base_dir: Optional[str], file_name_to_data: dict[str, Union[str, Any]]):
     if base_dir is None:
         return
     Path(base_dir).mkdir(parents=True, exist_ok=True)
@@ -61,4 +65,5 @@ def autodetect_dtype_str() -> str:
         return "auto"
 
 if __name__ == "__main__":
-    pass
+    print("A" + fn_arg_join(["hi", 3]) + "A")
+

@@ -1,7 +1,7 @@
-from fn import Function
-from queriers import LLMQuerier, MODELS_TO_METHOD, SUPPORTED_CLIENT_FOR_ASSISTANT_STR
-from prompts.fn_prompts import chat_prompt_to_implement_fn, completion_prompt_to_implement_fn, parsel_to_code_chat_suffix
-from parsing_utils import remove_helper_imports, extract_code
+from search.fn import Function
+from search.queriers import LLMQuerier, MODELS_TO_METHOD, SUPPORTED_CLIENT_FOR_ASSISTANT_STR
+from search.prompts.fn_prompts import chat_prompt_to_implement_fn, completion_prompt_to_implement_fn, parsel_to_code_chat_suffix
+from search.parsing_utils import remove_helper_imports, extract_code
 
 
 # Call code model and optionally filter the results

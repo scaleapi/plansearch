@@ -9,12 +9,12 @@ import os
 import sys
 from uuid import uuid4
 
-from exec_utils import check_fn, run_tests_per_code, get_passed_tests_and_errors
-from parsel.construct_graph import strongly_connected_components, get_root
-from parsel.parsel_queries import gen_fn_implementations, gen_fn_tests
-from fn import Function
-from base_classes import Test
-from python_utils import log_to_dir, chunk
+from search.exec_utils import check_fn, run_tests_per_code, get_passed_tests_and_errors
+from search.parsel.construct_graph import strongly_connected_components, get_root
+from search.parsel.parsel_queries import gen_fn_implementations, gen_fn_tests
+from search.fn import Function
+from search.base_classes import Test
+from search.python_utils import log_to_dir, chunk
 
 
 P_RANDOM_SAMPLE = 0.002

@@ -92,7 +92,7 @@ def main(args: argparse.Namespace):
     NUM_WORDS = args.num_words
     DATASET_NAME = args.dataset_name
 
-    btm = BackTranslateModel(model_name="gpt-4o-mini", experiment_directory=PATH_TO_RESULT, cache_file="caches/temp_backtranslate_cache.json", num_words=NUM_WORDS)
+    btm = BackTranslateModel(model_config_path="gpt-4o-mini", experiment_directory=PATH_TO_RESULT, cache_file="caches/temp_backtranslate_cache.json", num_words=NUM_WORDS)
     data = load_dataset(DATASET_NAME)
 
 

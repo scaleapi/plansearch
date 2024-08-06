@@ -1,4 +1,4 @@
-from prompts.pseudocode_prompts import SYSTEM_PROMPT_PSEUDOCODE, get_pseudocode, SYSTEM_PROMPT_GENERATE, generate_code_sol
+from search.prompts.pseudocode_prompts import SYSTEM_PROMPT_PSEUDOCODE, get_pseudocode, SYSTEM_PROMPT_GENERATE, generate_code_sol
 
 NL = '\n'
 

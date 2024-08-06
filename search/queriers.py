@@ -9,6 +9,7 @@ from typing import Optional, Union, Any
 import os
 from abc import ABC, abstractmethod
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import json
 from pathlib import Path
@@ -19,8 +20,8 @@ import warnings
 
 from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
-from querier_utils import generate_anthropic_completion, generate_openai_chat_completion, generate_openai_completion, generate_vllm_chat_completions, generate_vllm_completions, num_tokens_for_convo, generate_internal_completions, generate_llm_engine_chat_completion, generate_llm_engine_completion
-from python_utils import autodetect_dtype_str, chunk
+from search.query_clients import LLMClient
+from search.python_utils import autodetect_dtype_str, chunk
 
 
 MODELS_TO_METHOD = {
@@ -41,112 +42,22 @@ MODELS_TO_METHOD = {
 
 SUPPORTED_CLIENT_FOR_ASSISTANT_STR = ["vllm", "llama_cpp_hf"]
 
-MODEL_NAME_TO_CLIENT_STR = {
-    "gpt-4-turbo": ("OpenAI", openai.OpenAI, {}),
-    "gpt-4o": ("OpenAI", openai.OpenAI, {}),
-    "gpt-4": ("OpenAI-completion", openai.OpenAI, {}),
-    "gpt-4o-mini": ("OpenAI", openai.OpenAI, {}),
-    "gpt-3.5-turbo-instruct": ("OpenAI-completion", openai.OpenAI, {}),
-    "claude-3-5-sonnet-20240620": ("Anthropic", anthropic.Anthropic, {}),
-    "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct": ("vllm-chat", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
-    "deepseek-ai/DeepSeek-Coder-V2-Lite-Base": ("vllm-completion", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Lite-Base", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 4, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
-    "deepseek-ai/DeepSeek-Coder-V2-Instruct": ("vllm-chat", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
-    "deepseek-ai/DeepSeek-Coder-V2-Base": ("vllm-completion", LLM, {"model": "deepseek-ai/DeepSeek-Coder-V2-Base", "trust_remote_code": True, "gpu_memory_utilization": 0.975, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
-    "meta-llama/Meta-Llama-3-8B-Instruct": ("vllm-chat", LLM, {"model": "meta-llama/Meta-Llama-3-8B-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
-    "meta-llama/Meta-Llama-3.1-8B": ("vllm-completion", LLM, {"model": "meta-llama/Meta-Llama-3.1-8B", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
-    # "meta-llama/Meta-Llama-3.1-8B-Instruct": ("vllm-chat", LLM, {"model": "meta-llama/Meta-Llama-3.1-8B-Instruct", "trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 8, "max_model_len": 4096, "dtype": "bfloat16", "enforce_eager": True}),
-    "llama-3-1-8b-instruct": ("llmengine-chat", AutoTokenizer.from_pretrained, {"pretrained_model_name_or_path": "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
-    "llama-3-1-70b-instruct": ("llmengine-chat", AutoTokenizer.from_pretrained, {"pretrained_model_name_or_path": "meta-llama/Meta-Llama-3.1-70B-Instruct"}),
-    "meta-llama/Meta-Llama-3-8B": ("vllm-completion", LLM, {"model": "meta-llama/Meta-Llama-3-8B", "trust_remote_code": True, "gpu_memory_utilization": 0.8, "tensor_parallel_size": 4, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
-    "custom-chat": ("vllm-chat", LLM, {"trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 8, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
-    "custom-completion": ("vllm-completion", LLM, {"trust_remote_code": True, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 8, "max_model_len": 8192, "dtype": "bfloat16", "enforce_eager": True}),
-    "meta-llama/Meta-Llama-3-405B-Instruct": ("internal", AutoTokenizer.from_pretrained, {"pretrained_model_name_or_path": "meta-llama/Meta-Llama-3-70B-Instruct"}),
-}
-
 PRINT_EVERY_X_DOLLARS = 1e3
-# (input, output) price in dollars per token
-MODEL_NAME_TO_INPUT_OUTPUT_PRICE = {
-    "gpt-4-turbo": (10/1e6, 30/1e6),
-    "gpt-4": (10/1e6, 30/1e6),
-    "gpt-4o": (5/1e6, 15/1e6),
-    "gpt-4o-mini": (0.150/1e6, 0.600/1e6),
-    "gpt-3.5-turbo-instruct": (0, 0),
-    "claude-3-5-sonnet-20240620": (3/1e6, 15/1e6),
-    "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct": (0, 0),
-    "deepseek-ai/DeepSeek-Coder-V2-Lite-Base": (0, 0),
-    "deepseek-ai/DeepSeek-Coder-V2-Instruct": (0, 0),
-    "deepseek-ai/DeepSeek-Coder-V2-Base": (0, 0),
-    "meta-llama/Meta-Llama-3-8B-Instruct": (0, 0),
-    "meta-llama/Meta-Llama-3-405B-Instruct": (0, 0),
-    "meta-llama/Meta-Llama-3.1-8B": (0, 0),
-    "meta-llama/Meta-Llama-3.1-8B-Instruct": (0, 0),
-    "llama-3-1-8b-instruct": (0, 0),
-    "llama-3-1-70b-instruct": (0, 0),
-    "meta-llama/Meta-Llama-3-8B": (0, 0),
-}
 
-
-CLIENT_STR_TO_GENERATE_FN = {
-    "OpenAI": generate_openai_chat_completion,
-    "OpenAI-completion": generate_openai_completion,
-    "Anthropic": generate_anthropic_completion,
-    "vllm-chat": generate_vllm_chat_completions,
-    "vllm-completion": generate_vllm_completions,
-    "internal": generate_internal_completions,
-    "llmengine-chat": generate_llm_engine_chat_completion,
-}
-
-BATCH_CLIENT_FNS = {
-    "vllm-chat", "vllm-completion"
-}
-
-IS_COMPLETION_CLIENT_FNS = {
-    "vllm-completion", "OpenAI-completion"
-}
-
-
-def add_custom_model(model_name: str, completion_format: Optional[str] = None, num_gpus=8):
-    if completion_format is None:
-        completion_format = 'chat' if ('chat' in model_name.lower() or 'instruct' in model_name.lower()) else 'completion'
-        warnings.warn("completion_format was None on a custom model. Automatically assigning.")
-    assert completion_format in {"chat", "completion"}
-
-    if completion_format == 'chat':
-        MODEL_NAME_TO_CLIENT_STR[model_name] = MODEL_NAME_TO_CLIENT_STR["custom-chat"]
-        MODEL_NAME_TO_CLIENT_STR[model_name][2]["model"] = model_name
-        MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model_name] = (0, 0)
-    else:
-        MODEL_NAME_TO_CLIENT_STR[model_name] = MODEL_NAME_TO_CLIENT_STR["custom-completion"]
-        MODEL_NAME_TO_CLIENT_STR[model_name][2]["model"] = model_name
-        MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model_name] = (0, 0)
-
-    MODEL_NAME_TO_CLIENT_STR[model_name][2]["tensor_parallel_size"] = num_gpus
-
-    print(f"Assigning format of {model_name} to {completion_format}.")
-
-
-def is_chat(model_name: str, completion_format: Optional[str] = None, num_gpus=8):
-    if model_name not in MODEL_NAME_TO_CLIENT_STR:
-        add_custom_model(model_name, completion_format, num_gpus)
-
-    return MODEL_NAME_TO_CLIENT_STR[model_name][0] not in IS_COMPLETION_CLIENT_FNS
-
-class LLMQuerier(ABC):
-    def __init__(self, log_directory: Optional[str] = None, cache_file: Optional[str] = "cache.json", batch_size: Optional[int] = None, num_gpus=8) -> None:
-        self.log_directory = log_directory
-        self.clients = {}
-        self.current_price = 0.
-        self.next_print_price = PRINT_EVERY_X_DOLLARS
-
+class CompletionCache:
+    def __init__(self, cache_file: Optional[str]) -> None:
+        self.disabled = cache_file is None
         self.cache_file = cache_file
-        self.batch_size = batch_size
-        self.num_gpus = num_gpus
 
-        if self.cache_file is not None:
+        self.current_cache: dict[str, dict[str, Any]] = {}
+        self.next_requery_idx: dict[str, int] = {}
+
+        if not self.disabled:
             Path(os.path.dirname(self.cache_file)).mkdir(parents=True, exist_ok=True)
             if not os.path.exists(self.cache_file):
                 with open(self.cache_file, "w") as f:
                     json.dump({}, f)
+
             print("Loading cache")
             with open(self.cache_file, "r") as f:
                 self.current_cache = json.load(f)
@@ -157,19 +68,20 @@ class LLMQuerier(ABC):
                 with open(self.temp_cache_file, "w") as f:
                     json.dump({}, f)
 
-        self.next_idx_for_requery = {}
+    def save_cache(self):
+        if self.disabled:
+            return
+        with open(self.temp_cache_file, "w") as f:
+            json.dump(self.current_cache, f, indent=2)
+        os.replace(self.temp_cache_file, self.cache_file)
 
+    def query(self, model: str, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]) -> tuple[Optional[Completion], str]:
+        if self.disabled:
+            return None, ""
 
-    def generate_with_info(self, model: str, prompts: list[Prompt], completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = False, log_name: str = "") -> list[Completion]:
-        if model not in MODEL_NAME_TO_CLIENT_STR:
-            add_custom_model(model, completion_format, self.num_gpus)
-
-        if model not in self.clients:
-            self.clients[model] = MODEL_NAME_TO_CLIENT_STR[model][1](**MODEL_NAME_TO_CLIENT_STR[model][2])
-
-        print("generating completions...")
-        completions, cost = _generate_completions(self.clients[model], model, messages=prompts,
-            current_cache=self.current_cache if self.cache_file is not None else {},
+        query_str = self._get_cache_query_str(
+            model=model,
+            convo=message,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -177,25 +89,107 @@ class LLMQuerier(ABC):
             seed=seed,
             stop=stop,
             temperature=temperature,
-            top_p=top_p,
-            next_idx_for_requery=self.next_idx_for_requery if requery else None,
-            batch_size=self.batch_size,
+            top_p=top_p
         )
-        self.log(prompts, completions, log_name=log_name)
+
+        requery_idx = self.next_requery_idx.get(query_str, 0)
+        self.next_requery_idx[query_str] = requery_idx + 1
+        query_idx_str = f"{requery_idx}|{query_str}"
+
+        cached_completion = self.current_cache.get(query_idx_str, None)
+
+        if cached_completion is not None:
+            cached_completion = Completion(cached_completion["text"], cached_completion["cum_logprob"], cached_completion["num_tokens"])
+        
+        return cached_completion, query_idx_str
+   
+    def update(self, query_idx_str: str, completion: Completion) -> bool:
+        if self.disabled or query_idx_str == "" or query_idx_str in self.current_cache:
+            return False
+
+        self.current_cache[query_idx_str] = {"text": completion.code, "cum_logprob": completion.cumulative_logprob, "num_tokens": completion.num_tokens}
+        return True
+
+    def _get_cache_query_str(self, model: str, convo: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
+        if isinstance(convo, list):
+            message_str = '|'.join([f"ROLE:{message['role']}|CONTENT:{message['content']}" for message in convo])
+        else:
+            assert isinstance(convo, str)
+            message_str = convo
+        if stop is None:
+            stop_list = []
+        elif isinstance(stop, str):
+            stop_list = [stop]
+        else:
+            sorted(stop)
+            stop_list = stop
+        logit_bias_list = sorted(logit_bias.items()) if logit_bias is not None else []
+        return f"MODEL:{model}|MESSAGES:{message_str}|FREQUENCY_PENALTY:{frequency_penalty}|LOGIT_BIAS_LIST:{logit_bias_list}|MAX_TOKENS:{max_tokens}|PRESENCE_PENALTY:{presence_penalty}|SEED:{seed}|STOP_LIST:{stop_list}|TEMPERATURE:{temperature}|TOP_P:{top_p}"
+
+
+class LLMQuerier(ABC):
+    def __init__(self, log_directory: Optional[str], cache_file: Optional[str], global_batch_size: Optional[int]) -> None:
+        self.log_directory = log_directory
+        self.clients: dict[str, LLMClient] = {}
+        self.current_price = 0.
+        self.next_print_price = PRINT_EVERY_X_DOLLARS
+
+        self.cache = CompletionCache(cache_file)
+        self.global_batch_size = global_batch_size
+
+    def set_global_batch_size(self, global_batch_size: Optional[int] = None):
+        self.global_batch_size = global_batch_size
+    
+    def add_client(self, client_path: str) -> bool:
+        if client_path not in self.clients:
+            self.clients[client_path] = LLMClient.from_json(client_path)
+            return True
+        return False
+
+    def generate_with_info(self, client_name: str, prompts: list[Prompt], frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = True, log_name: str = "", timeout: Optional[float] = None) -> list[Completion]:
+        self.add_client(client_name)
+        print("generating completions...")
+        
+        if self.global_batch_size is not None:
+            assert self.global_batch_size > 0
+            chunked_prompts = list(chunk(prompts, self.global_batch_size))
+        else:
+            chunked_prompts = [prompts]
+
+        all_completions = []
+
+        with tqdm(total=len(prompts)) as pbar:
+            for i, prompt_chunk in enumerate(chunked_prompts):
+                completions, cost = _generate_completions(self.clients[client_name], prompt_chunk,
+                    cache=self.cache,
+                    frequency_penalty=frequency_penalty,
+                    logit_bias=logit_bias,
+                    max_tokens=max_tokens,
+                    presence_penalty=presence_penalty,
+                    seed=seed,
+                    stop=stop,
+                    temperature=temperature,
+                    top_p=top_p,
+                    timeout=timeout,
+                    pbar=pbar,
+                )
+                self.log(prompt_chunk, completions, log_name=log_name)
+
+                self.current_price += cost
+                if self.current_price > self.next_print_price:
+                    print(f"Current spending: ${self.current_price:.2f}")
+                    self.next_print_price = (self.current_price // PRINT_EVERY_X_DOLLARS + 1) * PRINT_EVERY_X_DOLLARS
+
+                print(f"done with {i+1}/{len(chunked_prompts)}, saving...")
+                self.cache.save_cache()
+                all_completions.extend(completions)
+
         print("done")
+        assert len(all_completions) == len(prompts)
+        return all_completions
 
-        self.current_price += cost
-        if self.current_price > self.next_print_price:
-            print(f"Current spending: ${self.current_price:.2f}")
-            self.next_print_price = (self.current_price // PRINT_EVERY_X_DOLLARS + 1) * PRINT_EVERY_X_DOLLARS
-
-        if self.cache_file is not None:
-            self.save_cache()
-
-        return completions
-
-    def generate(self, model: str, prompts: list[Prompt], completion_format: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = False, log_name: str = "") -> list[str]:
-        generations = self.generate_with_info(model, prompts, completion_format=completion_format,
+    def generate(self, client_name: str, prompts: list[Prompt], frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = True, log_name: str = "", timeout: Optional[float] = None) -> list[str]:
+        generations = self.generate_with_info(client_name, prompts,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -205,7 +199,8 @@ class LLMQuerier(ABC):
             temperature=temperature,
             top_p=top_p,
             requery=requery,
-            log_name=log_name,)
+            log_name=log_name,
+            timeout=timeout)
         return [c.code for c in generations]
     
     def log(self, prompts: list[Prompt], completions: list[Completion], log_name: str = ""):
@@ -221,146 +216,57 @@ class LLMQuerier(ABC):
             with open(output_file, "w") as f:
                 json.dump(output_list, f, indent=2)
     
-    def save_cache(self):
-        with open(self.temp_cache_file, "w") as f:
-            json.dump(self.current_cache, f, indent=2)
-        os.replace(self.temp_cache_file, self.cache_file)
-
     def set_log_directory(self, new_log_directory: str):
         self.log_directory = new_log_directory
 
 
-def cache_hash(model: str, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
-    if is_chat(model):
-        message_str = '|'.join([f"ROLE:{message['role']}|CONTENT:{message['content']}" for message in message])
-    else:
-        message_str = message
-    if stop is None:
-        stop_list = []
-    elif isinstance(stop, str):
-        stop_list = [stop]
-    else:
-        sorted(stop)
-        stop_list = stop
-    logit_bias_list = sorted(logit_bias.items()) if logit_bias is not None else []
-    return f"MODEL:{model}|MESSAGES:{message_str}|FREQUENCY_PENALTY:{frequency_penalty}|LOGIT_BIAS_LIST:{logit_bias_list}|MAX_TOKENS:{max_tokens}|PRESENCE_PENALTY:{presence_penalty}|SEED:{seed}|STOP_LIST:{stop_list}|TEMPERATURE:{temperature}|TOP_P:{top_p}"
-
-
 # Threaded generation code adapted from Federico Cassano
-def _generate_completions(client: Union[openai.OpenAI, anthropic.Anthropic], model: str, messages: Union[list[Prompt], tuple[Prompt, ...]], current_cache: dict[str, dict[str, Any]], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], next_idx_for_requery: Optional[dict[str, int]] = None, batch_size: Optional[int] = None) -> tuple[list[Completion], float]:
+def _generate_completions(client: LLMClient, messages: Union[list[Prompt], tuple[Prompt, ...]], cache: CompletionCache, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None, pbar: Optional[tqdm] = None) -> tuple[list[Completion], float]:
     if not isinstance(messages, (list, tuple)):
         raise ValueError("messages must be a list or tuple")
     assert len(messages)
 
-    is_chat = MODEL_NAME_TO_CLIENT_STR[model][0] not in IS_COMPLETION_CLIENT_FNS
-    if is_chat:
-        assert all(isinstance(message_seq, list) for message_seq in messages)
-    else:
-        assert all(isinstance(message_seq, str) for message_seq in messages)
-
-    completion_generator_fn = CLIENT_STR_TO_GENERATE_FN[MODEL_NAME_TO_CLIENT_STR[model][0]]
-
     completions: list[Optional[Completion]] = [None] * len(messages)
-    threads = []
+
     to_generate = []
-
-    input_tokens = 0
-    not_cached = []
-    new_next_idx_for_requery = {}
+    cache_keys = []
     for i, prompt in enumerate(messages):
-        cache_key = cache_hash(model, prompt, frequency_penalty, logit_bias, max_tokens, presence_penalty, seed, stop, temperature, top_p)
-        cache_i = i
+        completion, cache_key = cache.query(model=client.model_name, message=prompt, frequency_penalty=frequency_penalty, logit_bias=logit_bias, max_tokens=max_tokens, presence_penalty=presence_penalty, seed=seed, stop=stop, temperature=temperature, top_p=top_p)
 
-        # next_idx_for_requery is a dictionary mapping cache keys to the next unused index
-        # Otherwise, if we started from an earlier index, we may use the cached completion instead
-        if next_idx_for_requery is not None:
-            cache_i = i + next_idx_for_requery.get(cache_key, 0)
-            # Updates the next index that should be used for requerying on a new call of _generate_completions
-            assert new_next_idx_for_requery.get(cache_key, 0) < cache_i + 1
-            new_next_idx_for_requery[cache_key] = cache_i + 1
-
-        cache_key = f"{cache_i}|{cache_key}"
-
-        if cache_key in current_cache:
-            completions[i] = Completion(current_cache[cache_key]["text"], current_cache[cache_key]["cum_logprob"], current_cache[cache_key]["num_tokens"])
+        if completion is not None:
+            assert isinstance(completion, Completion)
+            completions[i] = completion
+            pbar.update(1)
         else:
-            not_cached.append((i, cache_key))
-            to_generate.append((prompt, i))
-            input_tokens += num_tokens_for_convo(prompt, is_chat)
+            cache_keys.append((i, cache_key))
+            to_generate.append(prompt)
+    
+    generated_completions, cost = client.generate_completions(messages=to_generate,
+                                                        frequency_penalty=frequency_penalty,
+                                                        logit_bias=logit_bias,
+                                                        max_tokens=max_tokens,
+                                                        presence_penalty=presence_penalty,
+                                                        seed=seed,
+                                                        stop=stop,
+                                                        temperature=temperature,
+                                                        top_p=top_p,
+                                                        timeout=timeout,
+                                                        pbar=pbar,
+                                                        )
 
-    if batch_size is None:
-        to_generate_chunked = [to_generate]
-    else:
-        assert batch_size > 0
-        to_generate_chunked = list(chunk(to_generate, batch_size))
-    with tqdm(total=len(to_generate)) as pbar:
-        for chunk_of_generate in to_generate_chunked:
-            if MODEL_NAME_TO_CLIENT_STR[model][0] in BATCH_CLIENT_FNS:
-                to_generate_prompts = [prompt for prompt, _ in chunk_of_generate]
-                if len(to_generate_prompts):
-                    genned_completions = completion_generator_fn(
-                        client=client,
-                        model=model,
-                        prompts=to_generate_prompts,
-                        frequency_penalty=frequency_penalty,
-                        logit_bias=logit_bias,
-                        max_tokens=max_tokens,
-                        presence_penalty=presence_penalty,
-                        seed=seed,
-                        stop=stop,
-                        temperature=temperature,
-                        top_p=top_p,
-                    )
-                    for (_, i), completion in zip(chunk_of_generate, genned_completions):
-                        completions[i] = completion
-                        pbar.update(1)
+    assert len(cache_keys) == len(generated_completions)
+    for (orig_idx, key), completion in zip(cache_keys, generated_completions):
+        completions[orig_idx] = completion
+        cache.update(key, completion)
 
-            else:
-                def generate_completion(prompt: list[dict[str, str]], i: int):
-                    completions[i] = completion_generator_fn(
-                            client=client,
-                            model=model,
-                            prompt=prompt,
-                            frequency_penalty=frequency_penalty,
-                            logit_bias=logit_bias,
-                            max_tokens=max_tokens,
-                            presence_penalty=presence_penalty,
-                            seed=seed,
-                            stop=stop,
-                            temperature=temperature,
-                            top_p=top_p,
-                        )
-                    pbar.update(1)
-
-                for prompt, i in chunk_of_generate:
-                    thread = threading.Thread(
-                        target=generate_completion, args=(prompt, i))
-                    threads.append(thread)
-                    thread.start()
-
-                for thread in threads:
-                    thread.join()
-
-    assert all(c is not None for c in completions), "Some completions are missing -- threading bug?"
-
-    output_tokens = 0
-    for uncached_idx, key in not_cached:
-        current_cache[key] = {"text": completions[uncached_idx].code, "cum_logprob": completions[uncached_idx].cumulative_logprob, "num_tokens": completions[uncached_idx].num_tokens}
-        output_tokens += completions[uncached_idx].num_tokens
-
-    for cache, i in new_next_idx_for_requery.items():
-        assert next_idx_for_requery.get(cache, 0) <= i
-        next_idx_for_requery[cache] = i
-
-    total_price = input_tokens * MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model][0] + output_tokens * MODEL_NAME_TO_INPUT_OUTPUT_PRICE[model][1]
-    return completions, total_price
+    return completions, cost
 
 
 if __name__ == "__main__":
     print("starting basic query...")
-    llmq = LLMQuerier("temp_logs", None, 10)
+    llmq = LLMQuerier("temp_logs", "temp_cache.json", 10)
     # print(llmq.generate("meta-llama/Meta-Llama-3-405B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("meta-llama/Meta-Llama-3-8B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("claude-3-5-sonnet-20240620", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
-    print(llmq.generate("gpt-4o-mini", [[{"role": "user", "content": "Please count to 10."}]] * 10, max_tokens=1000, temperature=0.1, top_p=0.9))
+    print(llmq.generate("model_configs/gpt-4o-mini.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "keeeeeey"}]] * 4, max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("claude-3-5-sonnet-20240620", ["What is up?"], max_tokens=1000, temperature=0.1, top_p=0.9))

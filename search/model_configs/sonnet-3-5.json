@@ -1,0 +1,8 @@
+{
+    "client_type": "Anthropic",
+    "model_name": "claude-3-5-sonnet-20240620",
+    "is_chat": true,
+    "is_batched": false,
+    "num_workers": 1024,
+    "price_per_input_output": [3e-6, 15e-6]
+}

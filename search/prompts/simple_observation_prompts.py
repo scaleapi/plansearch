@@ -1,5 +1,5 @@
-from prompts.simple_prompts import LCB_IO_FEWSHOT, LCB_FN_FEWSHOT
-from prompts.idea_prompts import generate_code_sol, SYSTEM_PROMPT_GENERATE
+from search.prompts.simple_prompts import LCB_IO_FEWSHOT, LCB_FN_FEWSHOT
+from search.prompts.idea_prompts import generate_code_sol, SYSTEM_PROMPT_GENERATE
 
 SYSTEM_PROMPT_OBSERVATION = ("You are an expert Python programmer and programming instructor. " +
                              "You will be given an algorithmic question (problem specification). " +

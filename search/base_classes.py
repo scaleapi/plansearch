@@ -2,11 +2,13 @@ from abc import ABC, abstractmethod
 from typing import List, Any, Optional, Union
 import datetime
 import os
+import json
 
-from python_utils import wrap_list
 from coderm.model import BaseModel, Completion
 from coderm.prompts import Prompt
-from queriers import LLMQuerier
+
+from search.python_utils import wrap_list
+from search.queriers import LLMQuerier
 
 
 class Test:
@@ -45,7 +47,7 @@ class Test:
 
 # Evan Wang, adapted from previously written code while at Caltech
 class Problem:
-    def __init__(self, problem_str: str, starter_code: str = "", public_tests: Optional[list[Test]] = None, private_tests: Optional[list[Test]] = None, solutions: Optional[list[str]] = None) -> None:
+    def __init__(self, problem_str: str, starter_code: str = "", public_tests: Optional[list[Test]] = None, private_tests: Optional[list[Test]] = None, solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None) -> None:
         self.problem_str = problem_str
 
         if public_tests is None:
@@ -73,9 +75,11 @@ class Problem:
             else:
                 assert starter_code is not None and len(starter_code)
 
+        self.og_fn_name = prev_fn_name
         self.fn_name = prev_fn_name
         self.starter_code = starter_code
         self.solutions = solutions
+        self.fail_codes = fail_codes
 
     def convert_stdio_to_fn_input(self):
         assert self.fn_name is None
@@ -102,8 +106,38 @@ class Problem:
             return None
         return starter_code_fn.split("(")[0]
 
+    def tests_to_dict(self, use_private: bool = True) -> dict[str, Any]:
+        out_dict = {"inputs": [], "outputs": []}
+        tests = self.private_tests if use_private else self.public_tests
+        for test in tests:
+            out_dict["inputs"].append(test.get_input_no_kwargs())
+            out_dict["outputs"].append(test.output)
+
+        if self.og_fn_name is not None:
+            out_dict["fn_name"] = self.og_fn_name
+
+        return out_dict
+
+    def to_dict(self) -> dict[str, Any]:
+        out_dict: dict[str, Union[str, list[str]]] = {
+                "question": self.problem_str,
+                "starter_code": self.starter_code,
+                "input_output": json.dumps(self.tests_to_dict(use_private=True)),
+                }
+
+        public_tests = self.tests_to_dict(use_private=False)
+        if len(public_tests["inputs"]) >= 0:
+            out_dict["public_input_output"] = json.dumps(public_tests)
+
+        if self.solutions is not None and self.fail_codes is not None and (len(self.solutions) or len(self.fail_codes)):
+            out_dict["solutions"] = self.solutions
+            out_dict["fail_codes"] = self.fail_codes
+
+        return out_dict
+
+    
     @staticmethod
-    def from_coderm_item(question: str, starter_code: str, public_tests: Optional[dict[str, Any]], tests: Optional[dict[str, Any]], solutions: Optional[list[str]] = None) -> "Problem":
+    def from_coderm_item(question: str, starter_code: str, public_tests: Optional[dict[str, Any]], tests: Optional[dict[str, Any]], solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None) -> "Problem":
         assert (public_tests is not None) or (tests is not None)
         if public_tests is None:
             public_tests = {"fn_name": tests.get("fn_name", None), "inputs": None, "outputs": None}
@@ -127,17 +161,18 @@ class Problem:
             assert len(tests["inputs"]) == len(tests["outputs"])
             test_list = [Test((wrap_list(inp), {}), out, fn_name) for inp, out in zip(tests["inputs"], tests["outputs"])]
 
-        return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, solutions=solutions)
+        return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, solutions=solutions, fail_codes=fail_codes)
 
 
 class SearchModel(BaseModel, ABC):
-    def __init__(self, model_name: str, experiment_directory: str = None, cache_file: str = None, querier_batch_size: Optional[int] = 16384, num_gpus: int = 8):
-        super().__init__(model_name)
+    def __init__(self, model_config_path: str, experiment_directory: Optional[str], cache_file: Optional[str], querier_batch_size: Optional[int]):
+        str_model_path = model_config_path.replace('/', '-')
+        super().__init__(str_model_path)
         self.experiment_directory = (experiment_directory if experiment_directory is not None 
-                                     else f"logs/{datetime.datetime.now().strftime('%m%dT%H%M%S')}_{model_name}")
-        self.querier = LLMQuerier(os.path.join(self.experiment_directory, "queries"), cache_file=cache_file, batch_size=querier_batch_size, num_gpus=num_gpus)
+                                     else f"logs/{datetime.datetime.now().strftime('%m%dT%H%M%S')}_{str_model_path}")
+        self.querier = LLMQuerier(os.path.join(self.experiment_directory, "queries"), cache_file=cache_file, global_batch_size=querier_batch_size)
 
-    def format_prompt(self, question: str, code: str = "", public_tests: Optional[dict[str, Any]] = None, tests: Optional[dict[str, Any]] = None, solutions: Optional[list[str]] = None) -> str | list[dict[str, str]]:
+    def format_prompt(self, question: str, code: str = "", public_tests: Optional[dict[str, Any]] = None, tests: Optional[dict[str, Any]] = None, solutions: Optional[list[str]] = None) -> str | list[dict[str, Any]]:
         print("Warning: `format_prompt` is misused right now.")
         return [{"problem_str": question, "starter_code": code, "public_tests": public_tests, "tests": tests, "solutions": solutions}]
 

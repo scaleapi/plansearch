@@ -3,15 +3,15 @@ import argparse
 import os
 
 from base_classes import Problem, SearchModel
-from queriers import MODEL_NAME_TO_CLIENT_STR
 from parsing_utils import markdown_codeblock_extract
 
 
 class BackTranslateModel(SearchModel):
-    import prompts.backtranslate_prompts as prompts
-    def __init__(self, model_name: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, num_words: Optional[int] = None):
-        super().__init__(model_name, experiment_directory=experiment_directory, cache_file=cache_file)
+    import search.prompts.backtranslate_prompts as prompts
+    def __init__(self, model_config_path: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, querier_batch_size: Optional[int] = 12_288, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, num_words: Optional[int] = None):
+        super().__init__(model_config_path, experiment_directory=experiment_directory, cache_file=cache_file, querier_batch_size=querier_batch_size)
 
+        self.model_config_path = model_config_path
         self.frequency_penalty = frequency_penalty
         self.logit_bias = logit_bias
         self.max_tokens = max_tokens
@@ -35,7 +35,7 @@ class BackTranslateModel(SearchModel):
 
     def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
         solution_to_nl_prompts = [self.solution_to_nl_prompt(problem) for problem in problems]
-        nl_solutions = self.querier.generate(self.model_name, 
+        nl_solutions = self.querier.generate(self.model_config_path, 
                               solution_to_nl_prompts,
                               frequency_penalty=self.frequency_penalty,
                               logit_bias=self.logit_bias,
@@ -49,7 +49,7 @@ class BackTranslateModel(SearchModel):
                               requery=True,
                               )
         nl_to_acc_sol_prompts = [self.nl_to_actual_solution_prompt(problem, nl_sol) for problem, nl_sol in zip(problems, nl_solutions)]
-        generated = self.querier.generate(self.model_name, 
+        generated = self.querier.generate(self.model_config_path, 
                               nl_to_acc_sol_prompts,
                               frequency_penalty=self.frequency_penalty,
                               logit_bias=self.logit_bias,
@@ -67,9 +67,9 @@ class BackTranslateModel(SearchModel):
 
 def add_backtranslate_args(parser: argparse.ArgumentParser):
     parser.add_argument(
-        "--model",
+        "--model-config-path",
         required=True,
-        help="Model to use"
+        help="Model config to use"
     )
     parser.add_argument(
         "--max-tokens",
@@ -97,4 +97,4 @@ def add_backtranslate_args(parser: argparse.ArgumentParser):
     )
 
 def get_backtranslate_model(args: argparse.Namespace) -> SearchModel:
-    return BackTranslateModel(args.model, args.experiment_directory, cache_file=args.cache_file, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, num_words=args.num_words)
+    return BackTranslateModel(args.model_config_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, num_words=args.num_words)

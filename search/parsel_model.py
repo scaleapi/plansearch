@@ -3,8 +3,8 @@ from copy import deepcopy
 import os
 
 
-from parsel.translate_to_parsel import compute_parsel_output
-from base_classes import Problem, SearchModel
+from search.parsel.translate_to_parsel import compute_parsel_output
+from search.base_classes import Problem, SearchModel
 
 
 CONVERT_FN_TO_STDIO = """
