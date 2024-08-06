@@ -18,7 +18,7 @@ import time
 
 from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
-from python_utils import chunk, random_print
+from search.python_utils import chunk, random_print
 
 PRINT_P = 0.02
 
