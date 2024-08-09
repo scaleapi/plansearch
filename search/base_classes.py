@@ -12,20 +12,23 @@ from search.queriers import LLMQuerier
 
 
 class Test:
-    def __init__(self, input: tuple[list[Any], dict[str, Any]], output: Any, fn_name: Optional[str]):
+    def __init__(self, input: tuple[list[Any], dict[str, Any]], output: Any, fn_name: Optional[str], has_Solution: Optional[bool]):
         assert isinstance(input, tuple) and len(input) == 2 and isinstance(input[0], list)
         if fn_name is None:
             assert (len(input[0]) == 1) and isinstance(input[0][0], str) and isinstance(output, str)
 
         self.input = input
         self.output = output
+        assert (fn_name is None) == (has_Solution is None)
         self.fn_name = fn_name
+        self.has_Solution = has_Solution
 
     def __repr__(self):
-        return f"Test({self.input}, {self.output}, {self.fn_name})"
+        return f"Test({self.input}, {self.output}, {self.fn_name}, {self.has_Solution})"
        
-    def switch_fn_name(self, fn_name: str = ""):
+    def switch_fn_name(self, fn_name: str = "", has_Solution: bool = False):
         self.fn_name = fn_name
+        self.has_Solution = has_Solution
     
     def get_input_no_kwargs(self) -> Union[str, list[Any]]:
         if self.fn_name is None:
@@ -49,6 +52,8 @@ class Test:
 class Problem:
     def __init__(self, problem_str: str, starter_code: str = "", public_tests: Optional[list[Test]] = None, private_tests: Optional[list[Test]] = None, solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None) -> None:
         self.problem_str = problem_str
+        self.starter_code = starter_code
+        self.has_Solution = "class Solution:" in starter_code if starter_code != "" else None
 
         if public_tests is None:
             self.public_tests: list[Test] = []
@@ -68,6 +73,8 @@ class Problem:
         for test in all_tests:
             assert isinstance(test, Test)
             assert prev_fn_name == test.fn_name
+            assert test.has_Solution == self.has_Solution
+
             prev_fn_name = test.fn_name
             if prev_fn_name is None:
                 assert starter_code == "" or starter_code is None
@@ -77,7 +84,6 @@ class Problem:
 
         self.og_fn_name = prev_fn_name
         self.fn_name = prev_fn_name
-        self.starter_code = starter_code
         self.solutions = solutions
         self.fail_codes = fail_codes
 
@@ -85,9 +91,9 @@ class Problem:
         assert self.fn_name is None
         self.fn_name = ""
         for test in self.public_tests:
-            test.switch_fn_name(self.fn_name)
+            test.switch_fn_name(self.fn_name, False)
         for test in self.private_tests:
-            test.switch_fn_name(self.fn_name)
+            test.switch_fn_name(self.fn_name, False)
    
     def has_starter_code(self):
         return not (self.starter_code == "" or self.starter_code is None)
@@ -95,10 +101,14 @@ class Problem:
     def get_starter_code_fn(self) -> Optional[str]:
         if self.starter_code == None or self.starter_code == "":
             return None
-        
         starter_split = self.starter_code.splitlines()
-        assert len(starter_split) == 3
-        return starter_split[1].split("def ")[1].rstrip()
+        if self.has_Solution:
+            assert len(starter_split) == 3
+            fn_line = 1
+        else:
+            assert len(starter_split) == 2
+            fn_line = 0
+        return starter_split[fn_line].split("def ")[1].rstrip()
     
     def get_starter_code_fn_name(self) -> Optional[str]:
         starter_code_fn = self.get_starter_code_fn()
@@ -146,20 +156,21 @@ class Problem:
 
         assert public_tests.get("fn_name", None) == tests.get("fn_name", None)
         fn_name = tests.get("fn_name", None)
+        has_Solution = ("class Solution:" in starter_code) if (fn_name is not None) else None
 
         if public_tests.get("inputs", None) is None:
             assert public_tests.get("outputs", None) is None
             public_test_list = []
         else:
             assert len(public_tests["inputs"]) == len(public_tests["outputs"])
-            public_test_list = [Test((wrap_list(inp), {}), out, fn_name) for inp, out in zip(public_tests["inputs"], public_tests["outputs"])]
+            public_test_list = [Test((wrap_list(inp), {}), out, fn_name, has_Solution) for inp, out in zip(public_tests["inputs"], public_tests["outputs"])]
         
         if tests.get("inputs", None) is None:
             assert tests.get("outputs", None) is None
             test_list = []
         else:
             assert len(tests["inputs"]) == len(tests["outputs"])
-            test_list = [Test((wrap_list(inp), {}), out, fn_name) for inp, out in zip(tests["inputs"], tests["outputs"])]
+            test_list = [Test((wrap_list(inp), {}), out, fn_name, has_Solution) for inp, out in zip(tests["inputs"], tests["outputs"])]
 
         return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, solutions=solutions, fail_codes=fail_codes)
 

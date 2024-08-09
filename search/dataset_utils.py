@@ -79,10 +79,7 @@ def parse_dataset(dataset_name: str, split: str) -> list[Problem]:
         
         if isinstance(json.loads(row["input_output"])["inputs"][0], list) and row["starter_code"] == "":
             assert False
-        try: 
-            problems.append(Problem.from_coderm_item(row["question"], row["starter_code"], public_tests, json.loads(row["input_output"]), row.get("solutions", None), row.get("fail_codes", None)))
-        except:
-            breakpoint()
+        problems.append(Problem.from_coderm_item(row["question"], row["starter_code"], public_tests, json.loads(row["input_output"]), row.get("solutions", None), row.get("fail_codes", None)))
 
     return problems
 

@@ -4,7 +4,7 @@ from search.dataset_utils import parse_dataset
 import argparse
 
 def main(args: argparse.Namespace):
-    model = SimplePromptModel('gpt-4o-mini', num_shot=1)
+    model = SimplePromptModel("model_configs/gpt-4o-mini.json", num_shot=1)
 
     all_data = {}
     splits = []

@@ -4,8 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 import openai
 import anthropic
 from httpcore import ReadError
+from urllib.error import URLError
 from vllm import SamplingParams, LLM
 from transformers import AutoTokenizer
+import sglang as sgl
 
 from pathlib import Path
 import random
@@ -41,14 +43,23 @@ class LLMClient:
         self.input_price = price_per_input_output[0]
         self.output_price = price_per_input_output[1]
 
-    def num_tokens_for_convo(self, convo: Prompt, encoding: tiktoken.Encoding = tiktoken.get_encoding("cl100k_base")) -> int:
+    def num_tokens_for_convo(self, convo: Prompt, encoding: tiktoken.Encoding = tiktoken.get_encoding("cl100k_base"), approx: bool = False) -> int:
         num_tokens = 0
+        content_str = []
         if self.is_chat:
             for turn in convo:
-                num_tokens += 1 + len(encoding.encode(turn["content"]))
+                num_tokens += 1
+                content_str.append(turn["content"])
         else:
-            num_tokens = len(encoding.encode(convo))
-        return num_tokens
+            content_str.append(convo)
+
+        for content in content_str:
+            if not approx:
+                num_tokens += len(encoding.encode(content))
+            else:
+                num_tokens += len(content) / 4
+
+        return int(num_tokens)
 
     def load_model(self):
         if self.is_loaded:
@@ -66,7 +77,7 @@ class LLMClient:
 
         input_tokens = 0
         for message in messages:
-            input_tokens += self.num_tokens_for_convo(message)
+            input_tokens += self.num_tokens_for_convo(message, approx=True)
         
         if self.is_batched:
             to_generate_chunked = chunk(indexed_messages, self.batch_size)
@@ -132,6 +143,7 @@ class LLMClient:
             "OpenAI": OpenAIClient,
             "Anthropic": AnthropicClient,
             "vLLM": vLLMClient,
+            "SGLang": SGLangClient,
         }
         assert Path(file_name).exists(), f"Path {file_name} doesn't exist!"
         assert file_name.endswith(".json")
@@ -202,8 +214,9 @@ class OpenAIClient(LLMClient):
                 random_print("(OpenAI) Unicode decode error.", p=PRINT_P)
             
             curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR + random.random() * self.JITTER_FACTOR * curr_backoff)
+            random_print(f"OpenAIClient: requerying in {curr_backoff} seconds.")
             time.sleep(curr_backoff)
-        
+
         choice = response.choices[0]
         o = choice.message.content
         logprobs = choice.logprobs.content  # type: ignore
@@ -284,7 +297,7 @@ class vLLMClient(LLMClient):
         super().load_model()
         self.model = LLM(self.model_name, trust_remote_code=True, tensor_parallel_size=self.tensor_parallel_size, gpu_memory_utilization=self.gpu_memory_utilization, dtype=self.dtype, enforce_eager=self.enforce_eager)
     
-    def batch_generate(self, messages: list[Prompt], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> tuple[list[Completion], float]:
+    def batch_generate(self, messages: list[Prompt], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> list[Completion]:
         if not self.is_loaded:
             self.load_model()
         assert self.model is not None
@@ -312,11 +325,13 @@ class vLLMClient(LLMClient):
             )
 
     def _generate_vLLM_chat_completions(self, prompts: list[list[dict[str, str]]], frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], **kwargs) -> list[Completion]:
+        assert isinstance(self.model, LLM)
         tokenizer = self.model.get_tokenizer()
         chat_msgs_as_str = tokenizer.apply_chat_template(prompts, tokenize=False, add_generation_prompt=True)
         return self._generate_vLLM_completions(chat_msgs_as_str, frequency_penalty=frequency_penalty, max_tokens=max_tokens, presence_penalty=presence_penalty, seed=seed, stop=stop, temperature=temperature, top_p=top_p)
 
     def _generate_vLLM_completions(self, prompts: list[str], frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], **kwargs) -> list[Completion]:
+        assert isinstance(self.model, LLM)
         sampling_params = SamplingParams(
             n=1,
             frequency_penalty=0 if frequency_penalty is None else frequency_penalty,
@@ -328,9 +343,93 @@ class vLLMClient(LLMClient):
             top_p=0.9 if top_p is None else top_p ,
         )
         outputs = self.model.generate(prompts, sampling_params=sampling_params)
-        return [Completion(output.outputs[0].text, output.outputs[0].cumulative_logprob, len(output.outputs[0].token_ids)) for output in outputs]
 
+        completions = []
+        for output in outputs:
+            completions.append(Completion(output.outputs[0].text, output.outputs[0].cumulative_logprob, len(output.outputs[0].token_ids)))
+            if output.outputs[0].finish_reason == "length":
+                warnings.warn("vLLMClient: output clipped.")
+                print("WARNING: vLLMClient output clipped.")
+        return completions
+
+
+class SGLangClient(LLMClient):
+    BACKOFF_FACTOR = 1
+    def __init__(self, model_name: str, base_url: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0, 0), start_backoff: float = 15, max_backoff: float = 90) -> None:
+        super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
+
+        self.start_backoff = start_backoff
+        self.max_backoff = max_backoff
+
+        self.base_url = base_url
+
+    def load_model(self):
+        curr_backoff = self.start_backoff
+        while 1:
+            try:
+                sgl.set_default_backend(sgl.RuntimeEndpoint(self.base_url))
+                break
+            except URLError as e:
+                print(f"SGLangClient: OpenAI API connection error. Make sure SGLang server is running at {self.base_url}")
+            
+            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR)
+            random_print(f"SGLangClient: requerying in {curr_backoff} seconds.")
+            time.sleep(curr_backoff)
+
+        self.is_loaded = True
+   
+    @sgl.function
+    def sgl_generate(s, convo: list[dict[str, str]], frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
+        assert convo[-1]["role"] == "user", f"SGLangClient last role must be user. Got {convo[-1]['role']}"
+        for c in convo:
+            if c["role"] == "system":
+                s += sgl.system(c["content"])
+            elif c["role"] == "user":
+                s += sgl.user(c["content"])
+            elif c["role"] == "assistant":
+                s += sgl.assistant(c["content"])
+            else:
+                raise NotImplementedError(f'Role c["role"] not supported in SGLangClient')
+        
+        s += sgl.assistant(sgl.gen("response", max_tokens=max_tokens, stop=stop, temperature=temperature, top_p=top_p, frequency_penalty=frequency_penalty, presence_penalty=presence_penalty, return_logprob=True))
+
+    def batch_generate(self, messages: list[Prompt], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> list[Completion]:
+        if not self.is_loaded:
+            self.load_model()
+        assert self.is_loaded
+
+        if not self.is_chat:
+            raise NotImplementedError("SGLangClient completion format not implemented yet.")
+
+        states = self.sgl_generate.run_batch(
+            [{"convo": convo,
+                "frequency_penalty": frequency_penalty,
+                "max_tokens": max_tokens,
+                "presence_penalty": presence_penalty,
+                "stop": stop,
+                "temperature": temperature,
+                "top_p": top_p}
+                for convo in messages],
+                progress_bar=True
+        )
+        
+        completions = []
+        for state in states:
+            assert state.messages()[-1]["role"] == "assistant"
+            output_text = state.messages()[-1]["content"]
+
+            meta = state.get_meta_info("response")
+            logprobs = [l[0] for l in meta["output_token_logprobs"]]
+            num_tok = meta["completion_tokens"]
+            cum_lp = logprobs_to_cumulative(logprobs)
+
+            if "FINISH_LENGTH" in meta["finish_reason"]:
+                warnings.warn("SGLangClient: output clipped.")
+                print("WARNING: SGLangClient output clipped.")
+            
+            completions.append(Completion(output_text, cum_lp, num_tok))
+        return completions
 
 if __name__ == "__main__":
-    lc = LLMClient.from_json("model_configs/gpt-4o-mini.json")
+    lc = LLMClient.from_json("model_configs/llama318bi_sglang.json")
     print(lc.generate_completions([[{"role": "user", "content": "what is up my dude?"}]] * 100, frequency_penalty=None, logit_bias=None, max_tokens=1000, presence_penalty=None, seed=None, stop=None, temperature=0.5, top_p=1))

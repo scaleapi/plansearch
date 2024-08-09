@@ -268,5 +268,6 @@ if __name__ == "__main__":
     # print(llmq.generate("meta-llama/Meta-Llama-3-405B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("meta-llama/Meta-Llama-3-8B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("claude-3-5-sonnet-20240620", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
-    print(llmq.generate("model_configs/gpt-4o-mini.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "keeeeeey"}]] * 4, max_tokens=1000, temperature=0.1, top_p=0.9))
+    print(llmq.generate("model_configs/llama318bi_sglang.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "keeeeeey"}]] * 4, max_tokens=100, temperature=0.1, top_p=0.9))
+    # print(llmq.generate("model_configs/model_configs/hsg_1.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "keeeeeey"}]] * 4, max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("claude-3-5-sonnet-20240620", ["What is up?"], max_tokens=1000, temperature=0.1, top_p=0.9))

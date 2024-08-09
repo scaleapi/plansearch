@@ -28,6 +28,7 @@ def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeo
     inputs_pc = [[test.get_input_no_kwargs() for test in tests] for tests in tests_per_code]
     outputs_pc = [[test.output for test in tests] for tests in tests_per_code]
     fn_names_pc = [[test.fn_name for test in tests] for tests in tests_per_code]
+    has_Solutions_pc = [tests[0].has_Solution if len(tests) else None for tests in tests_per_code]
 
     test_dicts = []
     for fn_names, inputs, outputs in zip(fn_names_pc, inputs_pc, outputs_pc):
@@ -44,7 +45,7 @@ def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeo
     for inputs in inputs_pc:
         if len(inputs) == 0:
             print("Warning: empty input test case found.")
-    return smart_exec_tests_queuebatched(impls, test_dicts, timeouts=timeouts, workers=num_workers, executor=executor, testbank=testbank)
+    return smart_exec_tests_queuebatched(impls, test_dicts, timeouts=timeouts, has_Solution_per_code=has_Solutions_pc, workers=num_workers, executor=executor, testbank=testbank)
 
 
 def run_tests(impl: str, tests: list[Test], timeout: int, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> tuple[bool, str]:
