@@ -7,7 +7,7 @@ import json
 from coderm.model import BaseModel, Completion
 from coderm.prompts import Prompt
 
-from search.python_utils import wrap_list
+from search.python_utils import wrap_list, stringify
 from search.queriers import LLMQuerier
 
 
@@ -50,7 +50,7 @@ class Test:
 
 # Evan Wang, adapted from previously written code while at Caltech
 class Problem:
-    def __init__(self, problem_str: str, starter_code: str = "", public_tests: Optional[list[Test]] = None, private_tests: Optional[list[Test]] = None, solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None) -> None:
+    def __init__(self, problem_str: str, starter_code: str = "", public_tests: Optional[list[Test]] = None, private_tests: Optional[list[Test]] = None, public_exec_string: Optional[str] = None, private_exec_string: Optional[str] = None, fn_name: Optional[str] = None, solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None) -> None:
         self.problem_str = problem_str
         self.starter_code = starter_code
         self.has_Solution = "class Solution:" in starter_code if starter_code != "" else None
@@ -65,10 +65,20 @@ class Problem:
         else:
             self.private_tests = private_tests
 
-        all_tests = self.public_tests + self.private_tests
-        assert len(all_tests)
-        prev_fn_name = all_tests[0].fn_name
+        self.public_exec_string = public_exec_string
+        self.private_exec_string = private_exec_string
 
+        # Make sure not both exec_string and tests are filled
+        assert self.public_exec_string is None or len(self.public_tests) == 0
+        assert self.private_exec_string is None or len(self.private_tests) == 0
+
+        all_tests = self.public_tests + self.private_tests
+        if len(all_tests):
+            prev_fn_name = all_tests[0].fn_name
+        else:
+            prev_fn_name = fn_name
+        
+        assert len(all_tests) or private_exec_string is not None
         # Input validation
         for test in all_tests:
             assert isinstance(test, Test)
@@ -84,6 +94,7 @@ class Problem:
 
         self.og_fn_name = prev_fn_name
         self.fn_name = prev_fn_name
+        
         self.solutions = solutions
         self.fail_codes = fail_codes
 
@@ -127,17 +138,33 @@ class Problem:
             out_dict["fn_name"] = self.og_fn_name
 
         return out_dict
+    
+    def get_test_private(self) -> Union[str, list[Test]]:
+        if self.private_exec_string is None:
+            return self.private_tests
+        return self.private_exec_string
+
+    def get_test_public(self) -> Union[str, list[Test]]:
+        if self.public_exec_string is None:
+            return self.public_tests
+        return self.public_exec_string
 
     def to_dict(self) -> dict[str, Any]:
         out_dict: dict[str, Union[str, list[str]]] = {
                 "question": self.problem_str,
                 "starter_code": self.starter_code,
-                "input_output": json.dumps(self.tests_to_dict(use_private=True)),
                 }
 
-        public_tests = self.tests_to_dict(use_private=False)
-        if len(public_tests["inputs"]) >= 0:
-            out_dict["public_input_output"] = json.dumps(public_tests)
+        private_test_dict = self.tests_to_dict(use_private=True)
+        if self.private_exec_string is not None:
+            private_test_dict["exec_string"] = self.private_exec_string
+
+        public_test_dict = self.tests_to_dict(use_private=False)
+        if self.public_exec_string is not None:
+            public_test_dict["exec_string"] = self.public_exec_string
+        
+        out_dict["input_output"] = stringify(private_test_dict)
+        out_dict["public_input_output"] = stringify(private_test_dict)
 
         if self.solutions is not None and self.fail_codes is not None and (len(self.solutions) or len(self.fail_codes)):
             out_dict["solutions"] = self.solutions
@@ -148,34 +175,33 @@ class Problem:
     
     @staticmethod
     def from_coderm_item(question: str, starter_code: str, public_tests: Optional[dict[str, Any]], tests: Optional[dict[str, Any]], solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None) -> "Problem":
-        assert (public_tests is not None) or (tests is not None)
         if public_tests is None:
-            public_tests = {"fn_name": tests.get("fn_name", None), "inputs": None, "outputs": None}
+            assert tests is not None
+            public_tests = {"fn_name": tests.get("fn_name", None), "inputs": [], "outputs": [], "exec_string": None}
         if tests is None:
-            tests = {"fn_name": public_tests.get("fn_name", None), "inputs": None, "outputs": None}
+            assert public_tests is not None
+            tests = {"fn_name": public_tests.get("fn_name", None), "inputs": [], "outputs": [], "exec_string": None}
 
-        assert public_tests.get("fn_name", None) == tests.get("fn_name", None)
-        fn_name = tests.get("fn_name", None)
+        public_tests["fn_name"] = public_tests.get("fn_name", None)
+        public_tests["exec_string"] = public_tests.get("exec_string", None)
+        tests["fn_name"] = tests.get("fn_name", None)
+        tests["exec_string"] = tests.get("exec_string", None)
+
+        assert public_tests["fn_name"] == tests["fn_name"]
+        fn_name = tests["fn_name"]
         has_Solution = ("class Solution:" in starter_code) if (fn_name is not None) else None
 
-        if public_tests.get("inputs", None) is None:
-            assert public_tests.get("outputs", None) is None
-            public_test_list = []
-        else:
-            assert len(public_tests["inputs"]) == len(public_tests["outputs"])
-            public_test_list = [Test((wrap_list(inp), {}), out, fn_name, has_Solution) for inp, out in zip(public_tests["inputs"], public_tests["outputs"])]
+        assert len(public_tests["inputs"]) == len(public_tests["outputs"])
+        public_test_list = [Test((wrap_list(inp), {}), out, fn_name, has_Solution) for inp, out in zip(public_tests["inputs"], public_tests["outputs"])]
         
-        if tests.get("inputs", None) is None:
-            assert tests.get("outputs", None) is None
-            test_list = []
-        else:
-            assert len(tests["inputs"]) == len(tests["outputs"])
-            test_list = [Test((wrap_list(inp), {}), out, fn_name, has_Solution) for inp, out in zip(tests["inputs"], tests["outputs"])]
+        assert len(tests["inputs"]) == len(tests["outputs"])
+        test_list = [Test((wrap_list(inp), {}), out, fn_name, has_Solution) for inp, out in zip(tests["inputs"], tests["outputs"])]
 
-        return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, solutions=solutions, fail_codes=fail_codes)
+        return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, public_exec_string=public_tests["exec_string"], private_exec_string=tests["exec_string"], solutions=solutions, fail_codes=fail_codes)
 
 
 class SearchModel(BaseModel, ABC):
+    COMPLETION_FROM_MODEL_SUPPORTED = False
     def __init__(self, model_config_path: str, experiment_directory: Optional[str], cache_file: Optional[str], querier_batch_size: Optional[int]):
         str_model_path = model_config_path.replace('/', '-')
         super().__init__(str_model_path)

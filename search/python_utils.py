@@ -1,22 +1,135 @@
 import os
 from pathlib import Path
-from typing import Any, Optional, Union, TypeVar
+from typing import Any, Optional, Union, TypeVar, List, Callable
 import json
 import random
 import sys
+from enum import Enum
 
+
+T = TypeVar('T')
+U = TypeVar('U')
+
+RNestListT = Union[T, List["RNestListT"]]
+RNestListU = Union[U, List["RNestListU"]]
+LiRNestListT = List[RNestListT]
+LiRNestListU = List[RNestListU]
+
+
+def nested_list_len(li: LiRNestListT) -> int:
+    assert isinstance(li, list)
+    cnt = 0
+    for el in li:
+        if isinstance(el, list):
+            cnt += nested_list_len(el)
+        else:
+            cnt += 1
+    return cnt
+
+class Action(Enum):
+    UP = "up"
+    DOWN = "down"
+    PUSH = "push"
+
+def merge_nested_lists(li1: RNestListT, li2: RNestListT) -> RNestListU:
+    assert isinstance(li1, list) == isinstance(li2, list)
+    if not isinstance(li1, list):
+        return (li1, li2)
+
+    output_list = []
+    assert isinstance(li1, list) and (len(li1) == len(li2))
+    for sub_li1, sub_li2 in zip(li1, li2):
+        output_list.append(merge_nested_lists(sub_li1, sub_li2))
+    return output_list
+
+def index_nested_list(li: LiRNestListT, items: list[T], actions: list[Action]) -> None:
+    for i, el in enumerate(li):
+        if isinstance(el, list):
+            actions.append(Action.UP)
+            index_nested_list(el, items, actions)
+            actions.append(Action.DOWN)
+        else:
+            actions.append(Action.PUSH)
+            items.append(li[i])
+
+def _format_from_actions(outputs: list[T], actions: list[Action]) -> LiRNestListT:
+    formatted_output: LiRNestListT = []
+
+    # push on right, pop on right
+    stack: list[LiRNestListT] = []
+    stack.append(formatted_output)
+
+    curr_output_idx = 0
+    for action in actions:
+        if action is Action.PUSH:
+            assert curr_output_idx < len(outputs)
+            stack[-1].append(outputs[curr_output_idx])
+            curr_output_idx += 1
+        elif action is Action.UP:
+            stack.append([])
+        else:
+            assert action is Action.DOWN
+            top_of_stack = stack.pop()
+            stack[-1].append(top_of_stack)
+
+    assert len(stack) == 1 and stack[-1] == formatted_output
+    assert curr_output_idx == len(outputs)
+
+    return formatted_output
+
+def batch_map_on_nested_list(li: LiRNestListT, fn: Callable[[List[T]], List[U]]) -> LiRNestListU:
+    assert isinstance(li, list)
+    items = []
+    actions = []
+
+    index_nested_list(li, items, actions)
+    assert nested_list_len(li) == sum(action is Action.PUSH for action in actions)
+
+    outputs = fn(items)
+    formatted_outputs = _format_from_actions(outputs, actions)
+    assert isinstance(formatted_outputs, list)
+
+    return formatted_outputs
+
+def map_on_nested_list(li: LiRNestListT, fn: Callable[[T], U]) -> LiRNestListU:
+    return batch_map_on_nested_list(li, lambda li: [fn(x) for x in li])
+
+
+def stringify(x: Any) -> str:
+    try:
+        return json.dumps(x)
+    except:
+        return repr(x)
+
+def unstringify(s: str) -> Any:
+    try:
+        return json.loads(s)
+    except:
+        return eval(s)
 
 def fn_arg_join(args: list[Any]) -> str:
     return ", ".join([repr(a) for a in args])
 
 def random_print(print_str: str, p: float = 1e-3):
-    print(print_str)
     if random.random() < p:
-        print(print_str, "rand", p)
+        print(print_str)
 
-T = TypeVar('T')
-def chunk(lst: list[T], n: int):
+def convert_to_cmd_arg(attr: str) -> str:
+    return attr.replace('_', '-')
+
+def str_to_bool(value: Union[str, bool]) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value.lower() in {'false', 'f', '0', 'no', 'n'}:
+        return False
+    elif value.lower() in {'true', 't', '1', 'yes', 'y'}:
+        return True
+    raise ValueError(f'{value} is not a valid boolean value')
+
+def chunk(lst: list[T], n: Optional[int]):
     """Yield successive n-sized chunks from lst. From StackOverflow."""
+    if n is None:
+        yield lst
     for i in range(0, len(lst), n):
         yield lst[i : i + n]
 
@@ -65,5 +178,8 @@ def autodetect_dtype_str() -> str:
         return "auto"
 
 if __name__ == "__main__":
-    print("A" + fn_arg_join(["hi", 3]) + "A")
-
+    lol = [[3, ["2"]], ["a"], "0", [], ["b", [3, [[[5]]]], ["1", 2, 3]]]
+    lol1 = [[1, [2]], ["a"], "1", [], ["b", [3, [[[5]]]], ["1", 2, 3]]]
+    print(lol)
+    # print(batch_map_on_nested_list(lol, lambda x: [str(s) for s in x]))
+    print(merge_nested_lists(lol, lol1))

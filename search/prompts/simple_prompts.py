@@ -1,3 +1,5 @@
+from typing import Optional
+
 SYSTEM_PROMPT = ("You are an expert Python programmer. " +
                  "You will be given a question (problem specification) and will " +
                  "generate a correct Python program that matches the specification " +
@@ -9,6 +11,19 @@ SYSTEM_PROMPT_COT = ("You are an expert Python programmer. " +
                  "that passes all tests. You will NOT return anything except for " +
                  "your reasoning in natural language, followed by the program inside Markdown codeblocks")
 
+STORY_SYSTEM_PROMPT = ("You are an expert Python programmer and a creative storyteller. " +
+                       "In fact, you oftentimes like to write stories before solving problems. " +
+                       "You will be given a question (problem specification) and you will write " +
+                       "an unrelated story, then a correct Python program that matches the specification and passes all tests. " +
+                       "You must return the program inside a Markdown codeblock.")
+
+RANDOM_WORD_SYSTEM_PROMPT = (
+    "You are an expert and creative Python programmer. "
+    "In fact, before writing any code, you are inspired heavily by short phrases. "
+    "You will be given a question (problem specification) and a short hint phrase, "
+    "then you will generate a correct Python program based off that hint that matches the specification and passes all tests. "
+    "You must return the program inside a Markdown codeblock, and YOU MUST USE THE HINTS."
+)
 
 # Adapted from CodeRM's prompts
 LCB_IO_FEWSHOT = [
@@ -58,9 +73,25 @@ Return Result: The number of characters that need to be appended to s is returne
    }
 ]
 
+MBPP_FN_FEWSHOT = [
+    {
+        "question": 'Write a function to find the similar elements from the given two tuple lists.\n\nYour code should pass these tests:\n```\nassert similar_elements((3, 4, 5, 6),(5, 7, 4, 10)) == (4, 5)\nassert similar_elements((1, 2, 3, 4),(5, 4, 3, 7)) == (3, 4)\nassert similar_elements((11, 12, 14, 13),(17, 15, 14, 13)) == (13, 14)\n```',
+        "code": 'def similar_elements(test_tup1, test_tup2):\r\n  res = tuple(set(test_tup1) & set(test_tup2))\r\n  return (res) '
+    },
+    {
+        "question":  'Write a python function to identify non-prime numbers.\n\nYour code should pass these tests:\n```\nassert is_not_prime(2) == False\nassert is_not_prime(10) == True\nassert is_not_prime(35) == True\n```',
+        "code": 'import math\r\ndef is_not_prime(n):\r\n    result = False\r\n    for i in range(2,int(math.sqrt(n)) + 1):\r\n        if n % i == 0:\r\n            result = True\r\n    return result'
+    },
+    {
+        "question":  'Write a function to find the largest integers from a given list of numbers using heap queue algorithm.\n\nYour code should pass these tests:\n```\nassert heap_queue_largest( [25, 35, 22, 85, 14, 65, 75, 22, 58],3)==[85, 75, 65] \nassert heap_queue_largest( [25, 35, 22, 85, 14, 65, 75, 22, 58],2)==[85, 75] \nassert heap_queue_largest( [25, 35, 22, 85, 14, 65, 75, 22, 58],5)==[85, 75, 65, 58, 35]\n```',
+        "code": 'import heapq as hq\r\ndef heap_queue_largest(nums,n):\r\n  largest_nums = hq.nlargest(n, nums)\r\n  return largest_nums'
+    }
+]
 
 # Adapted from CodeRM's prompting code
-def user_content_chat(question: str, starter_code: str = "", use_cot: bool = False, num_shot: int = 2) -> str:
+def user_content_chat(question: str, starter_code: str = "", use_cot: bool = False, num_shot: int = 2, num_story_words: int = 0, random_words: Optional[list[str]] = None, use_mbpp: bool = False) -> str:
+    if random_words is None:
+        random_words = []
     og_q = question.replace('"""', r'\"""')
     out_str = ""
 
@@ -68,10 +99,14 @@ def user_content_chat(question: str, starter_code: str = "", use_cot: bool = Fal
     use_few_shot = num_shot != 0
 
     if use_few_shot:
-        if starter_code == "" or starter_code is None:
-            shots_arr = LCB_IO_FEWSHOT
+        if use_mbpp:
+            shots_arr = MBPP_FN_FEWSHOT
+            assert not (starter_code == "" or starter_code is None)
         else:
-            shots_arr = LCB_FN_FEWSHOT
+            if starter_code == "" or starter_code is None:
+                shots_arr = LCB_IO_FEWSHOT
+            else:
+                shots_arr = LCB_FN_FEWSHOT
 
         out_str += f"You will given a competitive programming problem; please output correct Python code to solve it. Below are examples:\n\n\n"
 
@@ -88,6 +123,24 @@ def user_content_chat(question: str, starter_code: str = "", use_cot: bool = Fal
     
     if use_cot:
         out_str += "\n\nPlease think step-by-step before outputting Python code inside a Markdown codeblock."
+
+    assert num_story_words == 0 or len(random_words) == 0
+    if num_story_words > 0:
+        out_str += (
+            f"\n\nBefore writing the correct code to solve the problem, imagine a story inspired by the problem, "
+            f"approximately {num_story_words} words long, but not directly related to the problem. "
+            f"Then, write the correct code that solves the problem, incorporating lessons learned from the story "
+            f"and referencing it. YOU MUST QUOTE THE STORY IN THE CODE EVERY FEW LINES, AND THOSE QUOTES SHOULD INFLUENCE THE CODE YOU WRITE."
+        )
+    if len(random_words) > 0:
+        out_str += (
+            f"\n\nHere is the short phrase hint: {', '.join(random_words)}.\n\n"
+            "You must use this hint creatively in your solution, "
+            "and make sure to go beyond your initial intuition when coming up with the solution. "
+            "Your intuition is often wrong, so trust the hint and reason about it before outputting your code solution. "
+            "In your code solution, MAKE SURE to use the reasoned-through hints. "
+            "Again, YOU MUST USE THE HINTS, IN YOUR REASONING AND IN YOUR CODE."
+        )
 
     if not (starter_code == "" or starter_code is None):
         out_str += "\n\nYour solution should also utilize the following starter code:\n\n```python\n" + starter_code + "\n```"

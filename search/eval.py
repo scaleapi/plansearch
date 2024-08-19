@@ -9,7 +9,11 @@ from pathlib import Path
 from search.dataset_utils import parse_dataset, write_dataset, process_problem_results
 from search.generate_from_model import do_full_run
 
-from search.basic_prompting import add_basic_prompting_args, get_basic_prompting_model
+from search.one_prompt_models import (
+    add_basic_prompting_args, get_basic_prompting_model,
+    add_story_args, get_story_model,
+    add_random_word_args, get_random_word_model,
+)
 from search.backtranslate import add_backtranslate_args, get_backtranslate_model
 from search.simple_filter_models import (
     add_simple_prompt_filter_args, get_simple_prompt_filter_model,
@@ -28,6 +32,8 @@ def noop_add_args(parser: argparse.ArgumentParser):
 
 SEARCH_ALGS_TO_GET_ARGS_MODEL = {
     "basic_prompting": (add_basic_prompting_args, get_basic_prompting_model),
+    "story": (add_story_args, get_story_model),
+    "random_word": (add_random_word_args, get_random_word_model),
     "backtranslate": (add_backtranslate_args, get_backtranslate_model),
     "simple_filter": (add_simple_prompt_filter_args, get_simple_prompt_filter_model),
     "simple_idea": (add_simple_idea_args, get_simple_idea_model),
@@ -120,6 +126,11 @@ def add_universal_args(parser: argparse.ArgumentParser):
         help="Number of completions to generate per problem"
     )
     parser.add_argument(
+        "--completions-from-model",
+        action="store_true",
+        help="Whether to input more problems for n-completions or let model generate n-completions itself"
+    )
+    parser.add_argument(
         "--global-batch-size",
         type=int,
         default=12_288,
@@ -163,7 +174,7 @@ def generate_and_eval(search_alg: str):
 
     codes_results_dict = {}
     for split in splits:
-        codes, results = do_full_run(model, args.dataset, split, args.completion_limit, experiment_dir_output + split, exec_public=args.exec_public, testbank=args.testbank, num_workers=args.exec_batch_size, executor=args.executor)
+        codes, results = do_full_run(model, args.dataset, split, args.completion_limit, args.completions_from_model, experiment_dir_output + split, exec_public=args.exec_public, testbank=args.testbank, num_workers=args.exec_batch_size, executor=args.executor, timeout=args.timeout)
         codes_results_dict[split] = (codes, results)
 
     if output_result_path is not None:

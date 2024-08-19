@@ -6,14 +6,14 @@ import os
 from python_utils import log_to_dir  
 
 from search.base_classes import Problem, SearchModel
-from search.basic_prompting import SimplePromptModel, add_basic_prompting_args
-from search.simple_idea_model import SimpleIdeaModel, add_simple_idea_args
+from search.one_prompt_models import BasicPromptModel, add_basic_prompting_args, get_basic_prompting_model
+from search.simple_idea_model import SimpleIdeaModel, add_simple_idea_args, get_simple_idea_model
 from search.exec_utils import run_tests_per_code
 
 
 class SimpleFilteringModel(SearchModel):
     def __init__(self, model_config_path: str, base_search_model: SearchModel, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, querier_batch_size: Optional[int] = 12_288, gen_batch_size: int = 10, num_batches_to_try: int = 10, timeout: int = 30, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000"):
-        super().__init__(model_config_path, experiment_directory, cache_file)
+        super().__init__(model_config_path, experiment_directory, cache_file, querier_batch_size)
         self.base_search_model = base_search_model
 
         self.gen_batch_size = gen_batch_size
@@ -83,15 +83,15 @@ def add_simple_filter_args(parser: argparse.ArgumentParser):
         default=10,
         help="Number of batches to try overall"
     )
-   
+
 
 def add_simple_prompt_filter_args(parser: argparse.ArgumentParser):
     add_basic_prompting_args(parser)
     add_simple_filter_args(parser)
 
 def get_simple_prompt_filter_model(args: argparse.Namespace) -> SearchModel:
-    sp_model = SimplePromptModel(args.model_config_path, experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, use_cot=args.cot, use_sys_prompts=not args.no_sys_prompt, num_shot=not args.num_shots, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
-    return SimpleFilteringModel(args.model_config_path, experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, base_search_model=sp_model, gen_batch_size=args.gen_batch_size, num_batches_to_try=args.num_batches_to_try, timeout=args.timeout, num_workers=args.num_workers, testbank=args.testbank, executor=args.executor)
+    sp_model = get_basic_prompting_model(args)
+    return SimpleFilteringModel("simple_filter", experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, base_search_model=sp_model, gen_batch_size=args.gen_batch_size, num_batches_to_try=args.num_batches_to_try, timeout=args.timeout, num_workers=args.exec_batch_size, testbank=args.testbank, executor=args.executor)
 
 
 def add_idea_filter_args(parser: argparse.ArgumentParser):
@@ -99,5 +99,5 @@ def add_idea_filter_args(parser: argparse.ArgumentParser):
     add_simple_filter_args(parser)
 
 def get_idea_filter_model(args: argparse.Namespace) -> SearchModel:
-    si_model = SimpleIdeaModel(args.idea_model_config_path, args.code_model_config_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, use_few_shot=not args.zero_shot)
-    return SimpleFilteringModel("idea_filter", experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, base_search_model=si_model, gen_batch_size=args.gen_batch_size, num_batches_to_try=args.num_batches_to_try, timeout=args.timeout, num_workers=args.num_workers, testbank=args.testbank, executor=args.executor)
+    si_model = get_simple_idea_model(args)
+    return SimpleFilteringModel("idea_filter", experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, base_search_model=si_model, gen_batch_size=args.gen_batch_size, num_batches_to_try=args.num_batches_to_try, timeout=args.timeout, num_workers=args.exec_batch_size, testbank=args.testbank, executor=args.executor)

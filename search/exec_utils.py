@@ -22,33 +22,41 @@ def get_passed_tests_and_errors(
     return passed_tests, str_errors
 
 
-def run_tests_per_code(impls: list[str], tests_per_code: list[list[Test]], timeouts: list[int], num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> list[tuple[bool, str]]:
+def run_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], str]], timeouts: list[int], num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> list[tuple[bool, str]]:
     assert len(impls) == len(tests_per_code) == len(timeouts)
 
-    inputs_pc = [[test.get_input_no_kwargs() for test in tests] for tests in tests_per_code]
-    outputs_pc = [[test.output for test in tests] for tests in tests_per_code]
-    fn_names_pc = [[test.fn_name for test in tests] for tests in tests_per_code]
-    has_Solutions_pc = [tests[0].has_Solution if len(tests) else None for tests in tests_per_code]
+    test_infos = []
+    has_Solutions_pc = []
+    for tests in tests_per_code:
+        if isinstance(tests, list):
+            inputs = [test.get_input_no_kwargs() for test in tests]
+            outputs = [test.output for test in tests]
+            fn_names = [test.fn_name for test in tests]
+            has_Solutions = tests[0].has_Solution if len(tests) else None
+            test_dict = {"inputs": inputs, "outputs": outputs}
 
-    test_dicts = []
-    for fn_names, inputs, outputs in zip(fn_names_pc, inputs_pc, outputs_pc):
-        test_dicts.append({"inputs": inputs, "outputs": outputs})
+            # Check fn_names is all the same
+            if len(fn_names):
+                assert len(fn_names)
+                assert all(fn_name == fn_names[0] for fn_name in fn_names)
+                if fn_names[0] is not None:
+                    test_dict["fn_name"] = fn_names
 
-        # Check fn_names is all the same
-        if len(fn_names):
-            assert len(fn_names)
-            assert all(fn_name == fn_names[0] for fn_name in fn_names)
+            has_Solutions_pc.append(has_Solutions)
+            test_infos.append(test_dict)
 
-            if fn_names[0] is not None:
-                test_dicts[-1]["fn_name"] = fn_names
+            if len(inputs) == 0:
+                print("Warning: empty input test case found.")
 
-    for inputs in inputs_pc:
-        if len(inputs) == 0:
-            print("Warning: empty input test case found.")
-    return smart_exec_tests_queuebatched(impls, test_dicts, timeouts=timeouts, has_Solution_per_code=has_Solutions_pc, workers=num_workers, executor=executor, testbank=testbank)
+        else:
+            assert isinstance(tests, str)
+            test_infos.append(tests)
+            has_Solutions_pc.append(None)
+
+    return smart_exec_tests_queuebatched(impls, test_infos, timeouts=timeouts, has_Solution_per_code=has_Solutions_pc, workers=num_workers, executor=executor, testbank=testbank)
 
 
-def run_tests(impl: str, tests: list[Test], timeout: int, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> tuple[bool, str]:
+def run_tests(impl: str, tests: Union[list[Test], str], timeout: int, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> tuple[bool, str]:
     return run_tests_per_code([impl], [tests], [timeout], num_workers=num_workers, testbank=testbank, executor=executor)[0]
 
 

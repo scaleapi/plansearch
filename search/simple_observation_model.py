@@ -4,6 +4,7 @@ import os
 
 from search.base_classes import Problem, SearchModel
 from search.parsing_utils import markdown_codeblock_extract
+from search.model_config_utils import add_model_config_args, parse_args_for_model_client
 
 
 class SimpleObservationModel(SearchModel):
@@ -84,16 +85,8 @@ class SimpleObservationModel(SearchModel):
 
 
 def add_simple_observation_args(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--idea-model-config-path",
-        required=True,
-        help="Model config to use for ideas"
-    )
-    parser.add_argument(
-        "--code-model-config-path",
-        required=True,
-        help="Model config to use for implementation"
-    )
+    add_model_config_args(parser, "idea_model")
+    add_model_config_args(parser, "code_model")
     parser.add_argument(
         "--max-tokens",
         type=int,
@@ -120,4 +113,6 @@ def add_simple_observation_args(parser: argparse.ArgumentParser):
     )
 
 def get_simple_observation_model(args: argparse.Namespace) -> SearchModel:
-    return SimpleObservationModel(args.idea_model_config_path, args.code_model_config_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens)
+    idea_model_path = parse_args_for_model_client(args, model_config_name="idea_model", temp_folder_base=args.experiment_directory)
+    code_model_path = parse_args_for_model_client(args, model_config_name="code_model", temp_folder_base=args.experiment_directory)
+    return SimpleObservationModel(idea_model_path, code_model_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens)

@@ -4,6 +4,7 @@ import os
 
 from base_classes import Problem, SearchModel
 from parsing_utils import markdown_codeblock_extract
+from search.model_config_utils import add_model_config_args, parse_args_for_model_client
 
 
 class BackTranslateModel(SearchModel):
@@ -66,11 +67,7 @@ class BackTranslateModel(SearchModel):
 
 
 def add_backtranslate_args(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--model-config-path",
-        required=True,
-        help="Model config to use"
-    )
+    add_model_config_args(parser, "model")
     parser.add_argument(
         "--max-tokens",
         type=int,
@@ -97,4 +94,5 @@ def add_backtranslate_args(parser: argparse.ArgumentParser):
     )
 
 def get_backtranslate_model(args: argparse.Namespace) -> SearchModel:
-    return BackTranslateModel(args.model_config_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, num_words=args.num_words)
+    model_path = parse_args_for_model_client(args, model_config_name="model", temp_folder_base=args.experiment_directory)
+    return BackTranslateModel(model_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, num_words=args.num_words)

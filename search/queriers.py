@@ -111,7 +111,7 @@ class CompletionCache:
         return True
 
     def _get_cache_query_str(self, model: str, convo: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
-        if isinstance(convo, list):
+        if isinstance(convo, list) or isinstance(convo, tuple):
             message_str = '|'.join([f"ROLE:{message['role']}|CONTENT:{message['content']}" for message in convo])
         else:
             assert isinstance(convo, str)
@@ -173,7 +173,10 @@ class LLMQuerier(ABC):
                     timeout=timeout,
                     pbar=pbar,
                 )
-                self.log(prompt_chunk, completions, log_name=log_name)
+                self.log(prompt_chunk, completions, log_name=log_name,
+                         frequency_penalty=frequency_penalty, logit_bias=logit_bias,
+                         max_tokens=max_tokens, presence_penalty=presence_penalty,
+                         seed=seed, stop=stop, temperature=temperature, top_p=top_p)
 
                 self.current_price += cost
                 if self.current_price > self.next_print_price:
@@ -203,22 +206,31 @@ class LLMQuerier(ABC):
             timeout=timeout)
         return [c.code for c in generations]
     
-    def log(self, prompts: list[Prompt], completions: list[Completion], log_name: str = ""):
+    def log(self, prompts: list[Prompt], completions: list[Completion], log_name: str = "", frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
         assert len(prompts) == len(completions)
-        output_list = []
+        output_dict = {
+            "frequency_penalty": frequency_penalty,
+            "logit_bias": logit_bias,
+            "max_tokens": max_tokens,
+            "presence_penalty": presence_penalty,
+            "seed": seed,
+            "stop": stop,
+            "temperature": temperature,
+            "top_p": top_p,
+            "queries": []
+        }
         for prompt, completion in zip(prompts, completions):
             completion_dict = {"text": completion.code, "cum_logprob": completion.cumulative_logprob, "num_tokens": completion.num_tokens}
-            output_list.append({"prompt": prompt, "completion": completion_dict})
+            output_dict["queries"].append({"prompt": prompt, "completion": completion_dict})
 
         if self.log_directory is not None:
             Path(self.log_directory).mkdir(parents=True, exist_ok=True)
             output_file = os.path.join(self.log_directory, log_name + datetime.datetime.now().strftime("%m-%dT%H:%M:%S") + ".json")
             with open(output_file, "w") as f:
-                json.dump(output_list, f, indent=2)
+                json.dump(output_dict, f, indent=2)
     
     def set_log_directory(self, new_log_directory: str):
         self.log_directory = new_log_directory
-
 
 # Threaded generation code adapted from Federico Cassano
 def _generate_completions(client: LLMClient, messages: Union[list[Prompt], tuple[Prompt, ...]], cache: CompletionCache, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None, pbar: Optional[tqdm] = None) -> tuple[list[Completion], float]:

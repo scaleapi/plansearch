@@ -9,6 +9,8 @@ from vllm import SamplingParams, LLM
 from transformers import AutoTokenizer
 import sglang as sgl
 
+import json
+from datetime import datetime
 from pathlib import Path
 import random
 from typing import Optional, Any, Union
@@ -22,26 +24,35 @@ from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
 from search.python_utils import chunk, random_print
 
-PRINT_P = 0.02
+PRINT_P = 1
 
 
 class LLMClient:
-    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0, 0)) -> None:
+    PARAMS = ["model_name", "is_chat", "is_batched", "batch_size", "num_workers", "price_per_input_output"]
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.)) -> None:
+        assert isinstance(model_name, str)
+        assert isinstance(is_chat, bool)
+        assert isinstance(is_batched, bool)
+
         self.model_name = model_name
         self.is_chat = is_chat
         self.is_batched = is_batched
 
+        assert batch_size is None or isinstance(batch_size, int)
         self.batch_size = batch_size
         if self.batch_size is not None and not is_batched:
             warnings.warn("LLMClient: Setting batch_size does not do anything when is_batched is False.")
             
+        assert num_workers is None or isinstance(num_workers, int)
         self.num_workers = num_workers
         if self.num_workers is not None and is_batched:
             warnings.warn("LLMClient: Setting num_workers does not do anything when is_batched is True.")
 
         self.is_loaded = False
-        self.input_price = price_per_input_output[0]
-        self.output_price = price_per_input_output[1]
+
+        self.input_price = float(price_per_input_output[0])
+        self.output_price = float(price_per_input_output[1])
+        assert isinstance(self.input_price, float) and isinstance(self.output_price, float)
 
     def num_tokens_for_convo(self, convo: Prompt, encoding: tiktoken.Encoding = tiktoken.get_encoding("cl100k_base"), approx: bool = False) -> int:
         num_tokens = 0
@@ -69,7 +80,7 @@ class LLMClient:
     def generate_completions(self, messages: Union[list[Prompt], tuple[Prompt, ...]], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None, pbar: Optional[tqdm] = None,) -> tuple[list[Completion], float]:
         completions: list[Optional[Completion]] = [None] * len(messages)
         if self.is_chat:
-            assert all(isinstance(message_seq, list) for message_seq in messages)
+            assert all((isinstance(message_seq, list) or isinstance(message_seq, tuple)) for message_seq in messages)
         else:
             assert all(isinstance(message_seq, str) for message_seq in messages)
 
@@ -139,12 +150,6 @@ class LLMClient:
 
     @staticmethod
     def from_json(file_name: str) -> "LLMClient":
-        CLIENT_TYPE_TO_CLASS = {
-            "OpenAI": OpenAIClient,
-            "Anthropic": AnthropicClient,
-            "vLLM": vLLMClient,
-            "SGLang": SGLangClient,
-        }
         assert Path(file_name).exists(), f"Path {file_name} doesn't exist!"
         assert file_name.endswith(".json")
         with open(file_name, "r") as f:
@@ -156,9 +161,10 @@ class LLMClient:
 
 class OpenAIClient(LLMClient):
     TIMEOUT_FLAG = "__OPENAI_TIMEOUT__"
-    JITTER_FACTOR = 3/4
+    JITTER_FACTOR = 2/5
     BACKOFF_FACTOR = 2
-    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0, 0), start_backoff: float = 30, max_backoff: float = 3 * 60) -> None:
+    PARAMS = LLMClient.PARAMS + ["start_backoff", "max_backoff"]
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), start_backoff: float = 45., max_backoff: float = 3. * 60) -> None:
         super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
         self.start_backoff = start_backoff
         self.max_backoff = max_backoff
@@ -172,6 +178,31 @@ class OpenAIClient(LLMClient):
         curr_backoff = self.start_backoff
         while 1:
             try:
+                # # Create a unique filename based on the current time and a random number
+                # unique_number = random.randint(100000, 999999)
+                # log_directory = "long_logs"
+                # if not os.path.exists(log_directory):
+                #     os.makedirs(log_directory)
+                # log_filename = os.path.join(log_directory, f"query_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{unique_number}.json")
+
+                # # Log the query details before making the request
+                # query_log = {
+                #     "model": self.model_name,
+                #     "messages": message,
+                #     "frequency_penalty": frequency_penalty,
+                #     "logit_bias": logit_bias,
+                #     "max_tokens": max_tokens,
+                #     "presence_penalty": presence_penalty,
+                #     "seed": seed,
+                #     "stop": stop,
+                #     "temperature": temperature,
+                #     "top_p": top_p,
+                #     "timeout": timeout
+                # }
+
+                # with open(log_filename, "w") as log_file:
+                #     json.dump(query_log, log_file)
+
                 start = time.time()
                 response = self.client.chat.completions.create(
                     model=self.model_name,
@@ -188,8 +219,27 @@ class OpenAIClient(LLMClient):
                     timeout=timeout,
                 )
                 total = time.time() - start
+
                 if total >= 120:
-                    print(f"Warning: Request took {int(total)} seconds")
+                    print(f"Warning: Request took {int(total)} seconds.")
+                #     response_log_filename = os.path.join(log_directory, f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{unique_number}.json")
+                #     print(f"Warning: Request took {int(total)} seconds, saving to {response_log_filename}")
+                #     # Save the log with the response text to a different file
+                #     with open(response_log_filename, "w") as response_log_file:
+                #         query_log["response"] = response.choices[0].message.content
+                #         json.dump(query_log, response_log_file)
+                #     print(f"Response log saved to: {response_log_filename}")
+                # else:
+                #     # Delete the log file if the request time is less than 120 seconds
+                #     print(log_filename)
+                #     if os.path.exists(log_filename):
+                #         print("EXIST")
+                #         try:
+                #             os.remove(log_filename)
+                #         except FileNotFoundError:
+                #             print("whoops not found")
+                #             pass
+
                 break
             except openai.BadRequestError as e:
                 print(f"Bad request: {e}")
@@ -198,9 +248,10 @@ class OpenAIClient(LLMClient):
             except openai.RateLimitError:
                 random_print("OpenAI rate limit.", p=PRINT_P)
             except openai.APITimeoutError:
+                total = time.time() - start
                 if timeout is not None:
-                    print(f"OpenAI API exceeded timeout of {timeout}.")
-                    return Completion(self.TIMEOUT_FLAG, -1, 0)
+                    print(f"OpenAI API exceeded timeout of {timeout}. ({total} seconds)")
+                    return Completion(OpenAIClient.TIMEOUT_FLAG, -1, 0)
                 random_print("OpenAI API timeout.", p=PRINT_P)
             except ReadError:
                 random_print("httpcore ReadError.", p=PRINT_P)
@@ -213,9 +264,10 @@ class OpenAIClient(LLMClient):
             except UnicodeDecodeError:
                 random_print("(OpenAI) Unicode decode error.", p=PRINT_P)
             
-            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR + random.random() * self.JITTER_FACTOR * curr_backoff)
-            random_print(f"OpenAIClient: requerying in {curr_backoff} seconds.")
+            curr_backoff = curr_backoff + random.random() * OpenAIClient.JITTER_FACTOR * curr_backoff
+            random_print(f"OpenAIClient: requerying in {curr_backoff} seconds.", p=PRINT_P)
             time.sleep(curr_backoff)
+            curr_backoff = min(self.max_backoff, curr_backoff * OpenAIClient.BACKOFF_FACTOR)
 
         choice = response.choices[0]
         o = choice.message.content
@@ -232,9 +284,10 @@ class OpenAIClient(LLMClient):
 
 
 class AnthropicClient(LLMClient):
-    JITTER_FACTOR = 3/4
+    PARAMS = LLMClient.PARAMS + ["start_backoff", "max_backoff"]
+    JITTER_FACTOR = 3/5
     BACKOFF_FACTOR = 2
-    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0, 0), start_backoff: float = 30, max_backoff: float = 3 * 60) -> None:
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), start_backoff: float = 35., max_backoff: float = 3. * 60) -> None:
         super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
         self.start_backoff = start_backoff
         self.max_backoff = max_backoff
@@ -244,20 +297,31 @@ class AnthropicClient(LLMClient):
     def generate(self, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> Completion:
         if not self.is_chat:
             raise NotImplementedError("AnthropicClient completion format not implemented.")
+
+        assert isinstance(message, list)
+        system_prompt = None
+        for i, individual_msg in enumerate(message):
+            if individual_msg["role"] == "system":
+                assert i == 0, "Anthropic only supports system prompt at first message"
+                system_prompt = individual_msg["content"]
+        if system_prompt is not None:
+            message = message[1:]
+        
         curr_backoff = self.start_backoff
         while 1:
             try:
                 response = self.client.messages.create(
                     model=self.model_name,
                     messages=message,
+                    system=system_prompt,
                     max_tokens=max_tokens,
                     stop_sequences=stop,
                     temperature=temperature,
                     top_p=top_p,
                 )
                 break
-            except anthropic.RateLimitError:
-                random_print("Anthropic rate limit.", p=PRINT_P)
+            except anthropic.RateLimitError as e:
+                random_print("Anthropic rate limit." + str(e), p=PRINT_P)
             except anthropic.APITimeoutError:
                 random_print("Anthropic API timeout.", p=PRINT_P)
             except ReadError:
@@ -271,10 +335,11 @@ class AnthropicClient(LLMClient):
             except UnicodeDecodeError:
                 random_print("(Anthropic) Unicode decode error.", p=PRINT_P)
             
-            curr_backoff = min(self.max_backoff, curr_backoff * 2)
-            random_print(f"Requerying in {curr_backoff} seconds.", p=PRINT_P)
+            curr_backoff = curr_backoff + random.random() * AnthropicClient.JITTER_FACTOR * curr_backoff
+            random_print(f"AnthropicClient: requerying in {curr_backoff} seconds.", p=PRINT_P)
             time.sleep(curr_backoff)
-        
+            curr_backoff = min(self.max_backoff, curr_backoff * AnthropicClient.BACKOFF_FACTOR)
+       
         o = response.content[0].text
         assert o is not None, "Anthropic returned a null response"
         num_tokens = response.usage.output_tokens
@@ -284,7 +349,8 @@ class AnthropicClient(LLMClient):
         return Completion(o, -1, num_tokens)
     
 class vLLMClient(LLMClient):
-    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0, 0), tensor_parallel_size: int = 8, gpu_memory_utilization: float = 0.9, max_model_len: int = 4096, dtype: str = "bfloat16", enforce_eager: bool = True) -> None:
+    PARAMS = LLMClient.PARAMS + ["tensor_parallel_size", "gpu_memory_utilization", "max_model_len", "dtype", "enforce_eager"]
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), tensor_parallel_size: int = 8, gpu_memory_utilization: float = 0.9, max_model_len: int = 4096, dtype: str = "bfloat16", enforce_eager: bool = True) -> None:
         super().__init__(model_name, is_chat, is_batched, batch_size, num_workers, price_per_input_output)
         self.model = None
         self.tensor_parallel_size = tensor_parallel_size
@@ -354,17 +420,14 @@ class vLLMClient(LLMClient):
 
 
 class SGLangClient(LLMClient):
-    BACKOFF_FACTOR = 1
-    def __init__(self, model_name: str, base_url: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0, 0), start_backoff: float = 15, max_backoff: float = 90) -> None:
+    BACKOFF = 15
+    PARAMS = LLMClient.PARAMS + ["base_url", "bac"]
+    def __init__(self, model_name: str, base_url: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.)) -> None:
         super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
-
-        self.start_backoff = start_backoff
-        self.max_backoff = max_backoff
 
         self.base_url = base_url
 
     def load_model(self):
-        curr_backoff = self.start_backoff
         while 1:
             try:
                 sgl.set_default_backend(sgl.RuntimeEndpoint(self.base_url))
@@ -372,7 +435,7 @@ class SGLangClient(LLMClient):
             except URLError as e:
                 print(f"SGLangClient: OpenAI API connection error. Make sure SGLang server is running at {self.base_url}")
             
-            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR)
+            curr_backoff = SGLangClient.BACKOFF
             random_print(f"SGLangClient: requerying in {curr_backoff} seconds.")
             time.sleep(curr_backoff)
 
@@ -430,6 +493,16 @@ class SGLangClient(LLMClient):
             completions.append(Completion(output_text, cum_lp, num_tok))
         return completions
 
+
+CLIENT_TYPE_TO_CLASS: dict[str, LLMClient] = {
+    "OpenAI": OpenAIClient,
+    "Anthropic": AnthropicClient,
+    "vLLM": vLLMClient,
+    "SGLang": SGLangClient,
+}
+
+
 if __name__ == "__main__":
-    lc = LLMClient.from_json("model_configs/llama318bi_sglang.json")
-    print(lc.generate_completions([[{"role": "user", "content": "what is up my dude?"}]] * 100, frequency_penalty=None, logit_bias=None, max_tokens=1000, presence_penalty=None, seed=None, stop=None, temperature=0.5, top_p=1))
+    print(OpenAIClient.PARAMS)
+    # lc = LLMClient.from_json("model_configs/llama318bi_sglang.json")
+    # print(lc.generate_completions([[{"role": "user", "content": "what is up my dude?"}]] * 100, frequency_penalty=None, logit_bias=None, max_tokens=1000, presence_penalty=None, seed=None, stop=None, temperature=0.5, top_p=1))

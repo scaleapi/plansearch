@@ -1,9 +1,7 @@
 from datasets import DatasetDict, load_dataset, Dataset
 
-import json
-
 from coderm.eval.generic import CompletionResult
-
+from search.python_utils import stringify, unstringify
 from search.base_classes import Test, Problem
 
 
@@ -25,7 +23,7 @@ def convert_test_list_to_json(tests: list[Test]) -> str:
         output_dict["inputs"].append(test.get_input_no_kwargs())
         output_dict["outputs"].append(test.output)
     
-    return json.dumps(output_dict)
+    return stringify(output_dict)
 
 
 def process_problem_results(problems: list[Problem], codes_per_prob: list[list[str]], results_per_prob: list[list[CompletionResult]]) -> list[Problem]:
@@ -75,11 +73,20 @@ def parse_dataset(dataset_name: str, split: str) -> list[Problem]:
 
         public_tests = row.get("public_input_output", None)
         if public_tests is not None:
-            public_tests = json.loads(public_tests)
+            public_tests = unstringify(public_tests)
         
-        if isinstance(json.loads(row["input_output"])["inputs"][0], list) and row["starter_code"] == "":
-            assert False
-        problems.append(Problem.from_coderm_item(row["question"], row["starter_code"], public_tests, json.loads(row["input_output"]), row.get("solutions", None), row.get("fail_codes", None)))
+        private_tests = unstringify(row["input_output"])
+
+        # Input validation
+        if len(private_tests["inputs"]):
+            if isinstance(private_tests["inputs"][0], list):
+                assert row["starter_code"] != ""
+            elif isinstance(private_tests["inputs"][0], str):
+                assert row["starter_code"] == ""
+            else:
+                raise ValueError("Each input must be either `list` or `str`.")
+            
+        problems.append(Problem.from_coderm_item(row["question"], row["starter_code"], public_tests, private_tests, row.get("solutions", None), row.get("fail_codes", None)))
 
     return problems
 

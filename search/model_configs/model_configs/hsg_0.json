@@ -4,6 +4,6 @@
     "base_url": "http://localhost:30000",
     "is_chat": true,
     "is_batched": true,
-    "batch_size": 1024,
+    "batch_size": 8192,
     "price_per_input_output": [0, 0]
 }

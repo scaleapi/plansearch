@@ -8,11 +8,13 @@ import datetime
 from search.base_classes import Problem, SearchModel
 from search.parsing_utils import markdown_codeblock_extract
 from search.exec_utils import run_tests_per_code
-from search.python_utils import log_to_dir
+from search.python_utils import log_to_dir, batch_map_on_nested_list, map_on_nested_list, nested_list_len, index_nested_list, merge_nested_lists
+from search.model_config_utils import add_model_config_args, parse_args_for_model_client
 
 
 class ComboObservationModel(SearchModel):
     import search.prompts.combo_observation_prompts as prompts
+    COMPLETION_FROM_MODEL_SUPPORTED = True
     def __init__(self, idea_model_config_path: str, code_model_config_path: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, querier_batch_size: Optional[int] = 12_288, max_observation_k: int = 2, num_observations_to_generate: int = 10, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None, timeout: int = 30, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000"):
         super().__init__("observation", experiment_directory=experiment_directory, cache_file=cache_file, querier_batch_size=querier_batch_size)
 
@@ -60,6 +62,7 @@ class ComboObservationModel(SearchModel):
                               temperature=use_temperature,
                               top_p=self.top_p,
                               requery=True,
+                              timeout=150,
                               )
         assert len(outputs) == len(prompts)
         return outputs
@@ -70,17 +73,20 @@ class ComboObservationModel(SearchModel):
                  {"role": "user", "content": self.prompts.get_observation(problem.problem_str, self.num_observations_to_generate)}]
         return convo
     
-    def get_combined_observations_prompt(self, problem: Problem, observation_combos: tuple[str]) -> list[dict[str, str]]:
+    def get_combined_observations_prompt(self, problem: Problem, observation_combos: tuple[str, ...]) -> list[dict[str, str]]:
         convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_OBSERVATION2},
                  {"role": "user", "content": self.prompts.combine_observations(problem.problem_str, observation_combos)}]
         return convo
   
-    def get_observations_strs(self, problems: list[Problem], observation_combos: Optional[list[tuple[str]]] = None, iter_num: int = 0) -> list[list[str]]:
+    def get_observations_strs(self, problems_obs: list[tuple[Problem, Optional[tuple[str, ...]]]], iter_num: int = 0) -> list[tuple[tuple[str, ...], dict[str]]]:
+        problems = [problem for problem, _ in problems_obs]
+        observation_combos = [obs for _, obs in problems_obs]
+
         if iter_num == 0:
-            assert observation_combos is None
+            assert all(combs is None for combs in observation_combos)
             get_observations_prompts = [self.get_first_observations_prompt(problem) for problem in problems]
         elif iter_num == 1:
-            assert observation_combos is not None
+            assert all(isinstance(combs, tuple) for combs in observation_combos)
             assert len(problems) == len(observation_combos)
             get_observations_prompts = [self.get_combined_observations_prompt(problem, obs_combo) for problem, obs_combo in zip(problems, observation_combos)]
         else:
@@ -136,7 +142,7 @@ class ComboObservationModel(SearchModel):
         if any(el is None for el in python_obs_lists):
             print("Warning: Python parsing of observation lists failed.")
 
-        python_obs_lists = [[] if el is None else el for el in python_obs_lists]
+        python_obs_lists = [() if el is None else tuple(el) for el in python_obs_lists]
 
         logs = [{
             "problem_str": problems[i].problem_str,
@@ -146,12 +152,12 @@ class ComboObservationModel(SearchModel):
             "attempted_parses": log_attempted_parses[i],
             "python_observation_list": python_obs_lists[i]}
             for i in range(len(problems))]
-        log_to_dir(self.experiment_directory, {f"observation_{iter_num}_{datetime.datetime.now().strftime('%m-%dT%H:%M:%S')}.json": logs})
 
-        return python_obs_lists
+        assert len(python_obs_lists) == len(logs)
+        return [(obs_list, log) for obs_list, log in zip(python_obs_lists, logs)]
 
 
-    def split_into_observation_combos(self, observations: list[str]) -> list[tuple[str]]:
+    def split_into_observation_combos(self, observations: tuple[str, ...]) -> list[tuple[str, ...]]:
         max_k = min(self.max_observation_k, len(observations))
 
         observation_combos = []
@@ -162,7 +168,7 @@ class ComboObservationModel(SearchModel):
         return observation_combos
 
 
-    def get_nl_sols_prompt(self, problem: Problem, observation_combo: tuple[str]) -> list[dict[str, str]]:
+    def get_nl_sols_prompt(self, problem: Problem, observation_combo: tuple[str, ...]) -> list[dict[str, str]]:
         convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_NL_SOL_FROM_OBS_COMBO},
                  {"role": "user", "content": self.prompts.get_nl_solution_from_obs_combo(problem.problem_str, observation_combo)}]
         return convo
@@ -177,7 +183,10 @@ class ComboObservationModel(SearchModel):
                  {"role": "user", "content": self.prompts.generate_code_sol(problem.problem_str, pseudocode, problem.starter_code)}]
         return convo
     
-    def get_code_solution_from_obs_combos(self, expanded_problems: list[Problem], observation_combos: list[tuple[str]]) -> tuple[list[str], Any]:
+    def get_code_solution_from_obs_combos(self, problem_observation_combos: list[tuple[Problem, tuple[str, ...]]]) -> list[tuple[Problem, str, dict[str]]]:
+        expanded_problems = [problem for problem, _ in problem_observation_combos]
+        observation_combos = [obs for _, obs in problem_observation_combos]
+
         assert len(expanded_problems) == len(observation_combos)
         get_nl_sols_prompt = [self.get_nl_sols_prompt(problem, observation_combo)
                               for problem, observation_combo in zip(expanded_problems, observation_combos)]
@@ -196,47 +205,99 @@ class ComboObservationModel(SearchModel):
             "problem_str": expanded_problems[i].problem_str,
             "nl_solution": nl_solutions[i],
             "pseudocode": pseudocodes[i],
-            "output_codes": output_codes[i],
-            "parsed_codes": parsed_codes[i]}
+            "output_code": output_codes[i],
+            "parsed_code": parsed_codes[i]}
                 for i in range(len(expanded_problems))]
-        return parsed_codes, logs
-
+        return [(problem, code, log) for problem, code, log in zip(expanded_problems, parsed_codes, logs)]
 
     def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
-        observations_lists = self.get_observations_strs(problems, iter_num=0)
+        completions_from_model = kwargs.get("completions_from_model", False)
+        num_completions = 1
+        if completions_from_model:
+            num_completions = kwargs.get("num_completions", 1)
 
-        observation_combos: list[tuple[str]] = []
-        observation_combos_to_orig_problem_idx: list[int] = []
-        for i, observations in enumerate(observations_lists):
-            new_observation_combos = self.split_into_observation_combos(observations)
+        observations_lists_logs = self.get_observations_strs([(problem, None) for problem in problems], iter_num=0)
+        observations1_lists = [obs_list for obs_list, _ in observations_lists_logs]
+        observations1_logs = [log for _, log in observations_lists_logs]
+        assert len(observations1_lists) == len(problems)
 
-            observation_combos.extend(new_observation_combos)
-            observation_combos_to_orig_problem_idx.extend([i] * len(new_observation_combos))
-        
-        # Secondary observations
-        new_observation_lists = self.get_observations_strs([problems[orig_idx] for orig_idx in observation_combos_to_orig_problem_idx], observation_combos, iter_num=1)
-        for orig_idx, observations in zip(observation_combos_to_orig_problem_idx, new_observation_lists):
-            new_observation_combos = self.split_into_observation_combos(observations)
+        log_to_dir(self.experiment_directory, {f"observation_0_{datetime.datetime.now().strftime('%m-%dT%H:%M:%S')}.json": observations1_logs})
 
-            observation_combos.extend(new_observation_combos)
-            observation_combos_to_orig_problem_idx.extend([orig_idx] * len(new_observation_combos))
+        # List of len(problem). Each element is (problem, list of tuples each representing an observation combo)
+        problem_observation_combos = [[(problem, combo)
+                                       for combo in self.split_into_observation_combos(observations)]
+                                      for problem, observations in zip(problems, observations1_lists)]
 
-        code_sols, code_logs = self.get_code_solution_from_obs_combos([problems[orig_idx] for orig_idx in observation_combos_to_orig_problem_idx], observation_combos)
-        assert len(code_sols) == len(observation_combos) == len(observation_combos_to_orig_problem_idx)
+        # List L1 of length len(problems), each element corresponds to an observation combo, and contains a list of new observations
+        #           problems
+        #              / \
+        # .. | an observation combo | ..
+        #              /      \
+        #     ... | tuple of 2nd observations from that combo | ...
+        observations2_lists_logs = batch_map_on_nested_list(problem_observation_combos, lambda li: self.get_observations_strs(li, 1))
+        assert len(observations2_lists_logs) == len(problems)
+        assert all(len(obs2_lists_logs_for_prob) == len(prob_obs_list1_for_problem)
+                   for prob_obs_list1_for_problem, obs2_lists_logs_for_prob in zip(problem_observation_combos, observations2_lists_logs))
 
-        # remap back to orig index
-        results = run_tests_per_code(code_sols, [problems[orig_idx].public_tests for orig_idx in observation_combos_to_orig_problem_idx], [self.timeout] * len(code_sols), num_workers=self.num_workers, testbank=self.testbank, executor=self.executor)
-        assert len(results) == len(code_sols)
+        observations2_lists = map_on_nested_list(observations2_lists_logs, lambda x: x[0])
+        observations2_logs = map_on_nested_list(observations2_lists_logs, lambda x: x[1])
 
-        selected_codes = ["# No successful generation\n"] * len(problems) 
+        log_to_dir(self.experiment_directory, {f"observation_1_{datetime.datetime.now().strftime('%m-%dT%H:%M:%S')}.json": observations2_logs})
 
-        for i, (orig_idx, result, code) in enumerate(zip(observation_combos_to_orig_problem_idx, results, code_sols)):
-            result_good, result_error = result
-            if result_good:
-                selected_codes[orig_idx] = code
+        new_observation_combos = map_on_nested_list(observations2_lists, self.split_into_observation_combos)
+        problem_observation_combos = [ # problem layer
+            [ # observation 1 layer
+                [ # observation 2 layer
+                    [(problem, o) for o in [obs1] + obs_list2] for (problem, obs1), obs_list2 in zip(prob_obs_list1_for_problem, obs_list2_for_problem)
+                ]
+            ] for prob_obs_list1_for_problem, obs_list2_for_problem in zip(problem_observation_combos, new_observation_combos)]
+
+        code_sols_and_logs = batch_map_on_nested_list(problem_observation_combos, self.get_code_solution_from_obs_combos)
+        code_probs = map_on_nested_list(code_sols_and_logs, lambda x: x[0])
+        code_sols = map_on_nested_list(code_sols_and_logs, lambda x: x[1])
+        code_logs = map_on_nested_list(code_sols_and_logs, lambda x: x[2])
+
+        prob_sols = merge_nested_lists(code_probs, code_sols)
+        tot_len = nested_list_len(code_sols)
+        results = batch_map_on_nested_list(prob_sols, 
+            lambda li: run_tests_per_code([code for _, code in li], [prob.get_test_public() for prob, _ in li], 
+                                          [self.timeout] * tot_len, num_workers=self.num_workers, testbank=self.testbank, executor=self.executor)
+        )
+
+        assert len(results) == len(problems)
+
+        # Logging
+        code_logs_results = merge_nested_lists(code_logs, results)
+        def temp(x: tuple[dict[str], tuple[bool, str]]):
+            x[0]["gens"] = {"passed": x[1][0], "error": x[1][1]}
+        map_on_nested_list(code_logs_results, temp)
+
+        code_logs_probs = merge_nested_lists(code_logs, code_probs)
+        def temp(x: tuple[dict[str], Problem]):
+            public_test = x[1].get_test_public()
+            x[0]["tests"] = public_test if isinstance(public_test, str) else [test.to_repr_dict() for test in public_test]
+        map_on_nested_list(code_logs_probs, temp)
+
+
+        selected_codes = ["# No successful generation\n"] * len(problems) * num_completions
+        sols_results = merge_nested_lists(code_sols, results)
+
+        for i, sols_results_for_problem in enumerate(sols_results):
+            flattened_code_result_for_problem: list[tuple[str, tuple[bool, str]]] = []
+            index_nested_list(sols_results_for_problem, flattened_code_result_for_problem, [])
+
+            good_codes = []
+
+            for code, (result_good, _) in flattened_code_result_for_problem:
+                if result_good:
+                    good_codes.append(code)
             
-            code_logs[i]["tests"] = [test.to_repr_dict() for test in problems[orig_idx].public_tests]
-            code_logs[i]["gens"] = {"passed": result_good, "error": result_error}
+            if len(good_codes) == 0:
+                continue
+            
+            random.shuffle(good_codes)
+            for completion_idx in range(num_completions):
+                selected_codes[i + len(problems) * completion_idx] = good_codes[completion_idx % len(good_codes)]
 
         log_to_dir(os.path.join(self.experiment_directory), {f"codes_{datetime.datetime.now().strftime('%m-%dT%H:%M:%S')}.json": code_logs})
 
@@ -244,16 +305,8 @@ class ComboObservationModel(SearchModel):
 
 
 def add_combo_observation_args(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--idea-model-config-path",
-        required=True,
-        help="Model config to use for ideas"
-    )
-    parser.add_argument(
-        "--code-model-config-path",
-        required=True,
-        help="Model config to use for implementation"
-    )
+    add_model_config_args(parser, "idea_model")
+    add_model_config_args(parser, "code_model")
     parser.add_argument(
         "--max-tokens",
         type=int,
@@ -298,4 +351,6 @@ def add_combo_observation_args(parser: argparse.ArgumentParser):
     )
 
 def get_combo_observation_model(args: argparse.Namespace) -> SearchModel:
-    return ComboObservationModel(args.idea_model_config_path, args.code_model_config_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, seed=args.seed, max_observation_k=args.max_observation_k, num_observations_to_generate=args.num_observations_to_generate, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, timeout=args.timeout, num_workers=args.exec_batch_size, testbank=args.testbank, executor=args.executor)
+    idea_model_path = parse_args_for_model_client(args, model_config_name="idea_model", temp_folder_base=args.experiment_directory)
+    code_model_path = parse_args_for_model_client(args, model_config_name="code_model", temp_folder_base=args.experiment_directory)
+    return ComboObservationModel(idea_model_config_path=idea_model_path, code_model_config_path=code_model_path, experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, seed=args.seed, max_observation_k=args.max_observation_k, num_observations_to_generate=args.num_observations_to_generate, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, timeout=args.timeout, num_workers=args.exec_batch_size, testbank=args.testbank, executor=args.executor)
