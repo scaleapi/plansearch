@@ -15,6 +15,15 @@ SYSTEM_PROMPT_OBSERVATION2 = ("You are an expert Python programmer. " +
                              "about the problem, derived from the given observations. You will NOT return any code. " +
                              "Be as creative as possible, going beyond what you think is intuitively correct.")
 
+SYSTEM_PROMPT_CRITIC = (
+    "You are an expert Python programmer and competitive programming coach. "
+    "You will be given a competitive programming question (problem specification) "
+    "and a proposed idea to solve the problem by a student. "
+    "You will provide a criticism of said idea and a simple counter-example which would cause "
+    "the proposed idea to fail. "
+    "You MUST NOT output any solution code."
+)
+
 
 def get_observation(problem_str: str, num_observations: int = 10) -> str:
     prompt = f"Here is the competitive programming problem:\n\n{problem_str}\n\n"
@@ -105,7 +114,7 @@ SYSTEM_PROMPT_NL_SOL_FROM_OBS_COMBO = ("You are an expert Python programmer. " +
                  "like an editorial, which uses the observations given. You will NOT return any code. Be as creative as possible, " +
                  "going beyond what you think is intuitively correct.")
 
-def get_nl_solution_from_obs_combo(problem_str: str, obs_combo: tuple[str]) -> str:
+def get_nl_solution_from_obs_combo(problem_str: str, obs_combo: tuple[str, ...]) -> str:
     prompt = f"Here is the competitive programming problem:\n\n{problem_str}\n\n"
     if len(obs_combo) == 0:
         prompt += "No observations are necessary to solve this problem.\n\n"
@@ -119,3 +128,31 @@ def get_nl_solution_from_obs_combo(problem_str: str, obs_combo: tuple[str]) -> s
                "Quote relevant parts of the observations EXACTLY before each step of the solution. QUOTING IS CRUCIAL. ")
     
     return prompt
+
+FIX_CRITICISM_PROMPT = "Given your criticisms, how would you fix the proposed idea? DO NOT output any code."
+
+def get_criticsm_from_nl_sol(problem_str: str, nl_solution: str) -> str:
+    prompt = f"Here is the competitive programming problem:\n\n{problem_str}\n\n"
+    prompt += f"Here is a proposed natural language solution:\n\n{nl_solution}\n\n"
+    prompt += (
+            "The above solution may not be correct. Construct a criticism of this solution. "
+            "Remember that this should be a solution for a competitive programming setting, so the solution must be absolutely correct, "
+            "and issues commonly found in the real-world may not apply.\n\n"
+            "Thus, also give a counter-example (an input) to the solution which causes this solution to fail.\n"
+               )
+    return prompt
+
+SYSTEM_PROMPT_MERGE_FIXES = ("You are an expert Python programmer. "
+                             "You will be given a competitive programming question (problem specification). "
+                             "A student has come up with a proposed idea to solve the problem, but it is incorrect. "
+                             "You will also be given correct fixes to the idea. "
+                             "Incorporate the fixes into the original idea to make it correct. "
+                             "MAKE SURE not to output any code."
+                             )
+def get_merge_orig_fix(problem_str: str, nl_solution: str, fixes: str) -> str:
+    prompt = f"Here is the competitive programming problem:\n\n{problem_str}\n\n"
+    prompt += f"Here is the proposed natural language solution:\n\n{nl_solution}\n\n"
+    prompt += f"Unfortunately, the above solution is not entirely correct. Thus, there have been criticisms and fixes as such:\n\n{fixes}\n\n"
+    prompt += "Fix the original solution using the fixes as described above. YOU MUST FOLLOW THE FIXES EXACTLY, EVEN IF THEY ARE NOT INTUITIVELY CORRECT. DO NOT output code."
+    return prompt
+

@@ -91,6 +91,7 @@ def compute_parsel_output(problem: Problem, args: argparse.Namespace, querier: L
                 print(f"Translation Attempt number {j}")
                 print(f"Implementing {len(defined_fns)} functions")
 
+            assert False, "need to change public_tests"
             root.tests = deepcopy(problem.public_tests)
             for test in root.tests:
                 test.switch_fn_name(root.name)

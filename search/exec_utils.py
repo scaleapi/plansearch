@@ -22,12 +22,12 @@ def get_passed_tests_and_errors(
     return passed_tests, str_errors
 
 
-def run_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], str]], timeouts: list[int], num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> list[tuple[bool, str]]:
+def run_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], str]], timeouts: list[int], fn_names_pc: Optional[list[Optional[str]]] = None, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> list[tuple[bool, str]]:
     assert len(impls) == len(tests_per_code) == len(timeouts)
 
     test_infos = []
     has_Solutions_pc = []
-    for tests in tests_per_code:
+    for i, tests in enumerate(tests_per_code):
         if isinstance(tests, list):
             inputs = [test.get_input_no_kwargs() for test in tests]
             outputs = [test.output for test in tests]
@@ -37,10 +37,19 @@ def run_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], 
 
             # Check fn_names is all the same
             if len(fn_names):
-                assert len(fn_names)
                 assert all(fn_name == fn_names[0] for fn_name in fn_names)
-                if fn_names[0] is not None:
-                    test_dict["fn_name"] = fn_names
+                fn_name = fn_names[0]
+                if fn_names_pc is not None:
+                    assert fn_name == fn_names_pc[i]
+            else:
+                if fn_names_pc is not None:
+                    fn_name = fn_names_pc[i]
+                else:
+                    fn_name = None
+
+            if fn_name is not None:
+                test_dict["fn_name"] = fn_names
+
 
             has_Solutions_pc.append(has_Solutions)
             test_infos.append(test_dict)

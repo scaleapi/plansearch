@@ -1,0 +1,9 @@
+{
+    "client_type": "LLMEngine",
+    "model_name": "llama-3-1-405b-instruct-fp8",
+    "is_chat": true,
+    "is_batched": false,
+    "num_workers": 1024,
+    "price_per_input_output": [0.0, 0.0],
+    "tokenizer_model": "meta-llama/Meta-Llama-3.1-405B-Instruct-FP8"
+}

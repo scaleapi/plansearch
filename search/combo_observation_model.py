@@ -8,7 +8,7 @@ import datetime
 from search.base_classes import Problem, SearchModel
 from search.parsing_utils import markdown_codeblock_extract
 from search.exec_utils import run_tests_per_code
-from search.python_utils import log_to_dir, batch_map_on_nested_list, map_on_nested_list, nested_list_len, index_nested_list, merge_nested_lists
+from search.python_utils import log_to_dir, batch_map_on_nested_list, nested_list_len, index_nested_list, merge_nested_lists, map_nary_fn_on_nested_list
 from search.model_config_utils import add_model_config_args, parse_args_for_model_client
 
 
@@ -78,7 +78,7 @@ class ComboObservationModel(SearchModel):
                  {"role": "user", "content": self.prompts.combine_observations(problem.problem_str, observation_combos)}]
         return convo
   
-    def get_observations_strs(self, problems_obs: list[tuple[Problem, Optional[tuple[str, ...]]]], iter_num: int = 0) -> list[tuple[tuple[str, ...], dict[str]]]:
+    def get_observations_strs(self, problems_obs: list[tuple[Problem, Optional[tuple[str, ...]]]], iter_num: int = 0) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
         problems = [problem for problem, _ in problems_obs]
         observation_combos = [obs for _, obs in problems_obs]
 
@@ -172,6 +172,57 @@ class ComboObservationModel(SearchModel):
         convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_NL_SOL_FROM_OBS_COMBO},
                  {"role": "user", "content": self.prompts.get_nl_solution_from_obs_combo(problem.problem_str, observation_combo)}]
         return convo
+    
+    def get_criticsm_prompt(self, problem: Problem, nl_solution: str) -> list[dict[str, str]]:
+        convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_CRITIC},
+                 {"role": "user", "content": self.prompts.get_criticsm_from_nl_sol(problem.problem_str, nl_solution)}]
+        return convo
+
+    def get_merge_fixes_prompt(self, problem: Problem, nl_solution: str, fixes: str) -> list[dict[str, str]]:
+        convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_MERGE_FIXES},
+                 {"role": "user", "content": self.prompts.get_merge_orig_fix(problem.problem_str, nl_solution, fixes)}]
+        return convo
+
+    def get_nl_solutions_from_obs_combos(self, problem_observation_combos: list[tuple[Problem, tuple[str, ...]]]) -> list[tuple[list[tuple[Problem, str]], dict[str, Any]]]:
+        problems = [problem for problem, _ in problem_observation_combos]
+        observation_combos = [obs for _, obs in problem_observation_combos]
+
+        get_nl_sols_prompt = [self.get_nl_sols_prompt(problem, observation_combo)
+                              for problem, observation_combo in zip(problems, observation_combos)]
+        nl_solutions = self.query_model("idea", get_nl_sols_prompt)
+
+        get_criticsm_prompts = [self.get_criticsm_prompt(problem, nl_solution)
+                               for problem, nl_solution in zip(problems, nl_solutions)]
+        criticisms = self.query_model("idea", get_criticsm_prompts)
+
+        get_fixes_prompts = [prompt + [
+                                        {"role": "assistant", "content": criticism},
+                                        {"role": "user", "content": self.prompts.FIX_CRITICISM_PROMPT}
+                                    ]
+                                 for prompt, criticism in zip(get_criticsm_prompts, criticisms)]
+        fixes = self.query_model("idea", get_fixes_prompts)
+
+        logs = [{"problem_str": problems[i].problem_str, "observation_combo": observation_combos[i], "original_solution": nl_solutions[i], "criticism": criticisms[i], "fixes": fixes[i]} for i in range(len(problems))]
+        return [
+                    (
+                        [(problem, orig_sol), (problem, fixed_sol)],
+                         log
+                     )
+                for problem, orig_sol, fixed_sol, log in zip(problems, nl_solutions, fixes, logs)]
+
+
+        # get_fixed_sols_prompts = [self.get_merge_fixes_prompt(problem, nl_solution, fix)
+        #                           for problem, nl_solution, fix in zip(problems, nl_solutions, fixes)]
+        # fixed_solutions = self.query_model("idea", get_fixed_sols_prompts)
+
+        # logs = [{"problem_str": problems[i].problem_str, "observation_combo": observation_combos[i], "original_solution": nl_solutions[i], "criticism": criticisms[i], "fixes": fixes[i], "fixed_solution": fixed_solutions[i]} for i in range(len(problems))]
+        return [
+                    (
+                        [(problem, orig_sol), (problem, fixed_sol)],
+                         log
+                     )
+                for problem, orig_sol, fixed_sol, log in zip(problems, nl_solutions, fixed_solutions, logs)]
+
 
     def get_pseudocode_prompt(self, problem: Problem, nl_solution: str) -> list[dict[str, str]]:
         convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_PSEUDOCODE},
@@ -183,6 +234,29 @@ class ComboObservationModel(SearchModel):
                  {"role": "user", "content": self.prompts.generate_code_sol(problem.problem_str, pseudocode, problem.starter_code)}]
         return convo
     
+    def get_code_solution_from_nl_solutions(self, problem_nl_solutions: list[tuple[Problem, str]]) -> list[tuple[Problem, str, dict[str, Any]]]:
+        expanded_problems = [problem for problem, _ in problem_nl_solutions]
+        nl_solutions = [nl_sol for _, nl_sol in problem_nl_solutions]
+
+        get_pseudocode_prompt = [self.get_pseudocode_prompt(problem, nl_solution)
+                                 for problem, nl_solution in zip(expanded_problems, nl_solutions)]
+        pseudocodes = self.query_model("code", get_pseudocode_prompt)
+
+        get_code_prompt = [self.pseudocode_to_code_solution_prompt(problem, pseudocode)
+                                 for problem, pseudocode in zip(expanded_problems, pseudocodes)]
+        output_codes = self.query_model("code", get_code_prompt)
+        parsed_codes = [markdown_codeblock_extract(genned).strip() for genned in output_codes]
+
+        logs = [{
+            "problem_str": expanded_problems[i].problem_str,
+            "nl_solution": nl_solutions[i],
+            "pseudocode": pseudocodes[i],
+            "output_code": output_codes[i],
+            "parsed_code": parsed_codes[i]}
+                for i in range(len(expanded_problems))]
+        return [(problem, code, log) for problem, code, log in zip(expanded_problems, parsed_codes, logs)]
+
+
     def get_code_solution_from_obs_combos(self, problem_observation_combos: list[tuple[Problem, tuple[str, ...]]]) -> list[tuple[Problem, str, dict[str]]]:
         expanded_problems = [problem for problem, _ in problem_observation_combos]
         observation_combos = [obs for _, obs in problem_observation_combos]
@@ -210,8 +284,8 @@ class ComboObservationModel(SearchModel):
                 for i in range(len(expanded_problems))]
         return [(problem, code, log) for problem, code, log in zip(expanded_problems, parsed_codes, logs)]
 
-    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
-        completions_from_model = kwargs.get("completions_from_model", False)
+    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[list[str]]:
+        completions_from_model: bool = kwargs.get("completions_from_model", False)
         num_completions = 1
         if completions_from_model:
             num_completions = kwargs.get("num_completions", 1)
@@ -239,69 +313,49 @@ class ComboObservationModel(SearchModel):
         assert all(len(obs2_lists_logs_for_prob) == len(prob_obs_list1_for_problem)
                    for prob_obs_list1_for_problem, obs2_lists_logs_for_prob in zip(problem_observation_combos, observations2_lists_logs))
 
-        observations2_lists = map_on_nested_list(observations2_lists_logs, lambda x: x[0])
-        observations2_logs = map_on_nested_list(observations2_lists_logs, lambda x: x[1])
+        observations2_lists: list[list[tuple[str, ...]]] = map_nary_fn_on_nested_list(lambda x: x[0], observations2_lists_logs)
+        observations2_logs: list[list[dict[str, Any]]] = map_nary_fn_on_nested_list(lambda x: x[1], observations2_lists_logs)
 
         log_to_dir(self.experiment_directory, {f"observation_1_{datetime.datetime.now().strftime('%m-%dT%H:%M:%S')}.json": observations2_logs})
 
-        new_observation_combos = map_on_nested_list(observations2_lists, self.split_into_observation_combos)
+        new_observation_combos: list[list[list[tuple[str, ...]]]] = map_nary_fn_on_nested_list(self.split_into_observation_combos, observations2_lists)
         problem_observation_combos = [ # problem layer
             [ # observation 1 layer
                 [ # observation 2 layer
-                    [(problem, o) for o in [obs1] + obs_list2] for (problem, obs1), obs_list2 in zip(prob_obs_list1_for_problem, obs_list2_for_problem)
-                ]
+                    (problem, o) for o in [obs1] + obs_list2
+                ] for (problem, obs1), obs_list2 in zip(prob_obs_list1_for_problem, obs_list2_for_problem)
             ] for prob_obs_list1_for_problem, obs_list2_for_problem in zip(problem_observation_combos, new_observation_combos)]
 
-        code_sols_and_logs = batch_map_on_nested_list(problem_observation_combos, self.get_code_solution_from_obs_combos)
-        code_probs = map_on_nested_list(code_sols_and_logs, lambda x: x[0])
-        code_sols = map_on_nested_list(code_sols_and_logs, lambda x: x[1])
-        code_logs = map_on_nested_list(code_sols_and_logs, lambda x: x[2])
+        orig_and_fixed_nl_solutions_w_logs: list[list[list[tuple[list[tuple[Problem, str], dict[str, Any]]]]]] = batch_map_on_nested_list(problem_observation_combos, self.get_nl_solutions_from_obs_combos)
+        nl_solution_logs = map_nary_fn_on_nested_list(lambda x: x[1], orig_and_fixed_nl_solutions_w_logs)
+        problem_nl_solutions: list[list[list[list[tuple[Problem, str]]]]] = map_nary_fn_on_nested_list(lambda x: x[0], orig_and_fixed_nl_solutions_w_logs)
 
-        prob_sols = merge_nested_lists(code_probs, code_sols)
-        tot_len = nested_list_len(code_sols)
-        results = batch_map_on_nested_list(prob_sols, 
-            lambda li: run_tests_per_code([code for _, code in li], [prob.get_test_public() for prob, _ in li], 
-                                          [self.timeout] * tot_len, num_workers=self.num_workers, testbank=self.testbank, executor=self.executor)
-        )
+        log_to_dir(self.experiment_directory, {f"nl_solutions_{datetime.datetime.now().strftime('%m-%dT%H:%M:%S')}.json": nl_solution_logs})
 
-        assert len(results) == len(problems)
+        code_sols_and_logs = batch_map_on_nested_list(problem_nl_solutions, self.get_code_solution_from_nl_solutions)
+        # code_sols_and_logs = batch_map_on_nested_list(problem_observation_combos, self.get_code_solution_from_obs_combos)
 
-        # Logging
-        code_logs_results = merge_nested_lists(code_logs, results)
-        def temp(x: tuple[dict[str], tuple[bool, str]]):
-            x[0]["gens"] = {"passed": x[1][0], "error": x[1][1]}
-        map_on_nested_list(code_logs_results, temp)
-
-        code_logs_probs = merge_nested_lists(code_logs, code_probs)
-        def temp(x: tuple[dict[str], Problem]):
-            public_test = x[1].get_test_public()
-            x[0]["tests"] = public_test if isinstance(public_test, str) else [test.to_repr_dict() for test in public_test]
-        map_on_nested_list(code_logs_probs, temp)
-
-
-        selected_codes = ["# No successful generation\n"] * len(problems) * num_completions
-        sols_results = merge_nested_lists(code_sols, results)
-
-        for i, sols_results_for_problem in enumerate(sols_results):
-            flattened_code_result_for_problem: list[tuple[str, tuple[bool, str]]] = []
-            index_nested_list(sols_results_for_problem, flattened_code_result_for_problem, [])
-
-            good_codes = []
-
-            for code, (result_good, _) in flattened_code_result_for_problem:
-                if result_good:
-                    good_codes.append(code)
-            
-            if len(good_codes) == 0:
-                continue
-            
-            random.shuffle(good_codes)
-            for completion_idx in range(num_completions):
-                selected_codes[i + len(problems) * completion_idx] = good_codes[completion_idx % len(good_codes)]
+        code_probs: list[list[list[Problem]]] = map_nary_fn_on_nested_list(lambda x: x[0], code_sols_and_logs)
+        code_sols: list[list[list[str]]] = map_nary_fn_on_nested_list(lambda x: x[1], code_sols_and_logs)
+        code_logs: list[list[list[dict[str, Any]]]] = map_nary_fn_on_nested_list(lambda x: x[2], code_sols_and_logs)
 
         log_to_dir(os.path.join(self.experiment_directory), {f"codes_{datetime.datetime.now().strftime('%m-%dT%H:%M:%S')}.json": code_logs})
 
-        return selected_codes
+        output_codes: list[list[str]] = []
+
+        for code_sol_for_problem in code_sols:
+            flattened_code_sols: list[str] = []
+            index_nested_list(code_sol_for_problem, flattened_code_sols, [])
+            random.shuffle(flattened_code_sols)
+            
+            if num_completions < 0:
+                output_codes.append(flattened_code_sols)
+            else:
+                output_codes.append([])
+                for completion_idx in range(num_completions):
+                    output_codes[-1].append(flattened_code_sols[completion_idx % len(flattened_code_sols)])
+            
+        return output_codes
 
 
 def add_combo_observation_args(parser: argparse.ArgumentParser):
@@ -351,6 +405,7 @@ def add_combo_observation_args(parser: argparse.ArgumentParser):
     )
 
 def get_combo_observation_model(args: argparse.Namespace) -> SearchModel:
+    assert args.exec_public
     idea_model_path = parse_args_for_model_client(args, model_config_name="idea_model", temp_folder_base=args.experiment_directory)
     code_model_path = parse_args_for_model_client(args, model_config_name="code_model", temp_folder_base=args.experiment_directory)
     return ComboObservationModel(idea_model_config_path=idea_model_path, code_model_config_path=code_model_path, experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, seed=args.seed, max_observation_k=args.max_observation_k, num_observations_to_generate=args.num_observations_to_generate, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, timeout=args.timeout, num_workers=args.exec_batch_size, testbank=args.testbank, executor=args.executor)

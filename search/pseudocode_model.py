@@ -41,7 +41,7 @@ class PseudocodeModel(SearchModel):
                  {"role": "user", "content": self.prompts.generate_code_sol(problem.problem_str, pseudocode, problem.starter_code)}]
         return convo
 
-    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
+    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[list[str]]:
         get_nl_sols_prompt = [self.get_nl_sols_prompt(problem) for problem in problems]
         nl_solutions = self.querier.generate(self.idea_model, 
                               get_nl_sols_prompt,
@@ -83,7 +83,7 @@ class PseudocodeModel(SearchModel):
                               top_p=self.top_p,
                               requery=True,
                               )
-        return [markdown_codeblock_extract(genned).strip() for genned in generated]
+        return [[markdown_codeblock_extract(genned).strip()] for genned in generated]
 
 
 def add_pseudocode_args(parser: argparse.ArgumentParser):

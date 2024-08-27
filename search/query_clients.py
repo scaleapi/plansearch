@@ -1,14 +1,17 @@
 from tqdm import tqdm
 import tiktoken
-from concurrent.futures import ThreadPoolExecutor
 import openai
 import anthropic
+import together
 from httpcore import ReadError
 from urllib.error import URLError
 from vllm import SamplingParams, LLM
 from transformers import AutoTokenizer
 import sglang as sgl
+import llmengine
 
+import requests
+from concurrent.futures import ThreadPoolExecutor
 import json
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +32,7 @@ PRINT_P = 1
 
 class LLMClient:
     PARAMS = ["model_name", "is_chat", "is_batched", "batch_size", "num_workers", "price_per_input_output"]
+    BAD_REQUEST_FLAG = "No output returned."
     def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.)) -> None:
         assert isinstance(model_name, str)
         assert isinstance(is_chat, bool)
@@ -244,14 +248,14 @@ class OpenAIClient(LLMClient):
             except openai.BadRequestError as e:
                 print(f"Bad request: {e}")
                 print(message, "\n^ the bad prompt")
-                return Completion("No output returned.", -1, 3)
+                return Completion(self.BAD_REQUEST_FLAG, -1, 3)
             except openai.RateLimitError:
                 random_print("OpenAI rate limit.", p=PRINT_P)
             except openai.APITimeoutError:
                 total = time.time() - start
                 if timeout is not None:
                     print(f"OpenAI API exceeded timeout of {timeout}. ({total} seconds)")
-                    return Completion(OpenAIClient.TIMEOUT_FLAG, -1, 0)
+                    return Completion(self.TIMEOUT_FLAG, -1, 0)
                 random_print("OpenAI API timeout.", p=PRINT_P)
             except ReadError:
                 random_print("httpcore ReadError.", p=PRINT_P)
@@ -264,10 +268,10 @@ class OpenAIClient(LLMClient):
             except UnicodeDecodeError:
                 random_print("(OpenAI) Unicode decode error.", p=PRINT_P)
             
-            curr_backoff = curr_backoff + random.random() * OpenAIClient.JITTER_FACTOR * curr_backoff
+            curr_backoff = curr_backoff + random.random() * self.JITTER_FACTOR * curr_backoff
             random_print(f"OpenAIClient: requerying in {curr_backoff} seconds.", p=PRINT_P)
             time.sleep(curr_backoff)
-            curr_backoff = min(self.max_backoff, curr_backoff * OpenAIClient.BACKOFF_FACTOR)
+            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR)
 
         choice = response.choices[0]
         o = choice.message.content
@@ -310,20 +314,34 @@ class AnthropicClient(LLMClient):
         curr_backoff = self.start_backoff
         while 1:
             try:
-                response = self.client.messages.create(
-                    model=self.model_name,
-                    messages=message,
-                    system=system_prompt,
-                    max_tokens=max_tokens,
-                    stop_sequences=stop,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
+                if system_prompt is not None:
+                    response = self.client.messages.create(
+                        model=self.model_name,
+                        messages=message,
+                        system=system_prompt,
+                        max_tokens=max_tokens,
+                        stop_sequences=stop,
+                        temperature=temperature,
+                        top_p=top_p,
+                    )
+                else:
+                    response = self.client.messages.create(
+                        model=self.model_name,
+                        messages=message,
+                        max_tokens=max_tokens,
+                        stop_sequences=stop,
+                        temperature=temperature,
+                        top_p=top_p,
+                    )
                 break
             except anthropic.RateLimitError as e:
                 random_print("Anthropic rate limit." + str(e), p=PRINT_P)
             except anthropic.APITimeoutError:
                 random_print("Anthropic API timeout.", p=PRINT_P)
+            except anthropic.BadRequestError as e:
+                print(f"Anthropic Bad request: {e}")
+                print(message, "\n^ the bad prompt")
+                return Completion(self.BAD_REQUEST_FLAG, -1, 3)
             except ReadError:
                 random_print("httpcore ReadError.", p=PRINT_P)
             except anthropic.APIConnectionError:
@@ -335,10 +353,10 @@ class AnthropicClient(LLMClient):
             except UnicodeDecodeError:
                 random_print("(Anthropic) Unicode decode error.", p=PRINT_P)
             
-            curr_backoff = curr_backoff + random.random() * AnthropicClient.JITTER_FACTOR * curr_backoff
+            curr_backoff = curr_backoff + random.random() * self.JITTER_FACTOR * curr_backoff
             random_print(f"AnthropicClient: requerying in {curr_backoff} seconds.", p=PRINT_P)
             time.sleep(curr_backoff)
-            curr_backoff = min(self.max_backoff, curr_backoff * AnthropicClient.BACKOFF_FACTOR)
+            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR)
        
         o = response.content[0].text
         assert o is not None, "Anthropic returned a null response"
@@ -435,14 +453,14 @@ class SGLangClient(LLMClient):
             except URLError as e:
                 print(f"SGLangClient: OpenAI API connection error. Make sure SGLang server is running at {self.base_url}")
             
-            curr_backoff = SGLangClient.BACKOFF
+            curr_backoff = self.BACKOFF
             random_print(f"SGLangClient: requerying in {curr_backoff} seconds.")
             time.sleep(curr_backoff)
 
         self.is_loaded = True
    
     @sgl.function
-    def sgl_generate(s, convo: list[dict[str, str]], frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
+    def sgl_chat_generate(s, convo: list[dict[str, str]], frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
         assert convo[-1]["role"] == "user", f"SGLangClient last role must be user. Got {convo[-1]['role']}"
         for c in convo:
             if c["role"] == "system":
@@ -456,30 +474,48 @@ class SGLangClient(LLMClient):
         
         s += sgl.assistant(sgl.gen("response", max_tokens=max_tokens, stop=stop, temperature=temperature, top_p=top_p, frequency_penalty=frequency_penalty, presence_penalty=presence_penalty, return_logprob=True))
 
+    @sgl.function
+    def sgl_completion_generate(s, prompt: str, frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
+        s += prompt + sgl.gen("response", max_tokens=max_tokens, stop=stop, temperature=temperature, top_p=top_p, frequency_penalty=frequency_penalty, presence_penalty=presence_penalty, return_logprob=True)
+
     def batch_generate(self, messages: list[Prompt], frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> list[Completion]:
         if not self.is_loaded:
             self.load_model()
         assert self.is_loaded
 
         if not self.is_chat:
-            raise NotImplementedError("SGLangClient completion format not implemented yet.")
-
-        states = self.sgl_generate.run_batch(
-            [{"convo": convo,
-                "frequency_penalty": frequency_penalty,
-                "max_tokens": max_tokens,
-                "presence_penalty": presence_penalty,
-                "stop": stop,
-                "temperature": temperature,
-                "top_p": top_p}
-                for convo in messages],
-                progress_bar=True
-        )
+            assert(all(isinstance(msg, str) for msg in messages))
+            states = self.sgl_completion_generate.run_batch(
+                [{"prompt": message,
+                    "frequency_penalty": frequency_penalty,
+                    "max_tokens": max_tokens,
+                    "presence_penalty": presence_penalty,
+                    "stop": stop,
+                    "temperature": temperature,
+                    "top_p": top_p}
+                    for message in messages],
+                    progress_bar=True
+            )
+        else:
+            states = self.sgl_chat_generate.run_batch(
+                [{"convo": convo,
+                    "frequency_penalty": frequency_penalty,
+                    "max_tokens": max_tokens,
+                    "presence_penalty": presence_penalty,
+                    "stop": stop,
+                    "temperature": temperature,
+                    "top_p": top_p}
+                    for convo in messages],
+                    progress_bar=True
+            )
         
         completions = []
         for state in states:
-            assert state.messages()[-1]["role"] == "assistant"
-            output_text = state.messages()[-1]["content"]
+            output_text = state["response"]
+            if self.is_chat:
+                assert state.messages()[-1]["role"] == "assistant"
+                assert output_text.strip() == state.messages()[-1]["content"].strip()
+                output_text = state.messages()[-1]["content"]
 
             meta = state.get_meta_info("response")
             logprobs = [l[0] for l in meta["output_token_logprobs"]]
@@ -494,15 +530,359 @@ class SGLangClient(LLMClient):
         return completions
 
 
+class DeepSeekClient(LLMClient):
+    TIMEOUT_FLAG = "__DEEPSEEK_TIMEOUT__"
+    JITTER_FACTOR = 2/5
+    BACKOFF_FACTOR = 2
+    PARAMS = LLMClient.PARAMS + ["start_backoff", "max_backoff"]
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), start_backoff: float = 45., max_backoff: float = 3. * 60) -> None:
+        super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
+        self.start_backoff = start_backoff
+        self.max_backoff = max_backoff
+
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        assert api_key is not None
+
+        self.client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        self.is_loaded = True
+    
+    def generate(self, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> Completion:
+        if not self.is_chat:
+            raise NotImplementedError("DeepSeekClient completion format not implemented.")
+
+        curr_backoff = self.start_backoff
+        while 1:
+            try:
+                start = time.time()
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=message,
+                    frequency_penalty=frequency_penalty,
+                    logit_bias=logit_bias,
+                    logprobs=True,
+                    max_tokens=max_tokens,
+                    presence_penalty=presence_penalty,
+                    seed=seed,
+                    stop=stop,
+                    temperature=temperature,
+                    top_p=top_p,
+                    timeout=timeout,
+                )
+                total = time.time() - start
+
+                if total >= 120:
+                    print(f"Warning: Request took {int(total)} seconds.")
+                break
+            except openai.BadRequestError as e:
+                print(f"Bad request: {e}")
+                print(message, "\n^ the bad prompt")
+                return Completion(self.BAD_REQUEST_FLAG, -1, 3)
+            except openai.RateLimitError:
+                random_print("DeepSeekAI rate limit.", p=PRINT_P)
+            except openai.APITimeoutError:
+                total = time.time() - start
+                if timeout is not None:
+                    print(f"DeepSeekAI API exceeded timeout of {timeout}. ({total} seconds)")
+                    return Completion(self.TIMEOUT_FLAG, -1, 0)
+                random_print("DeepSeekAI API timeout.", p=PRINT_P)
+            except ReadError:
+                random_print("httpcore ReadError.", p=PRINT_P)
+            except openai.APIConnectionError:
+                random_print("DeepSeekAI API connection error.", p=PRINT_P)
+            except openai.InternalServerError:
+                random_print("DeepSeekAI internal server error.", p=PRINT_P)
+            except json.JSONDecodeError:
+                random_print("(DeepSeekAI) JSON decode error.", p=PRINT_P)
+            except UnicodeDecodeError:
+                random_print("(DeepSeekAI) Unicode decode error.", p=PRINT_P)
+            
+            curr_backoff = curr_backoff + random.random() * self.JITTER_FACTOR * curr_backoff
+            random_print(f"DeepSeekAI: requerying in {curr_backoff} seconds.", p=PRINT_P)
+            time.sleep(curr_backoff)
+            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR)
+
+        choice = response.choices[0]
+        o = choice.message.content
+        if choice.logprobs is None:
+            print("A5151")
+            return Completion("N/A", -1, -1)
+            breakpoint()
+        logprobs = choice.logprobs.content  # type: ignore
+        assert o is not None, "DeepSeekAI returned a null response"
+        assert logprobs is not None, "DeepSeekAI returned a null logprobs"
+        logprobs = [l.logprob for l in logprobs]
+        num_tokens = len(logprobs)
+        if choice.finish_reason == "length":
+            print("Warning, output clipped.")
+
+        cumulative_logprob = logprobs_to_cumulative(logprobs)
+        return Completion(o, cumulative_logprob, num_tokens)
+
+
+class LLMEngineClient(LLMClient):
+    JITTER_FACTOR = 2/5
+    BACKOFF_FACTOR = 2
+    PARAMS = LLMClient.PARAMS + ["start_backoff", "max_backoff", "tokenizer_model"]
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), start_backoff: float = 45., max_backoff: float = 3. * 60, tokenizer_model: Optional[str] = None) -> None:
+        super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
+        self.start_backoff = start_backoff
+        self.max_backoff = max_backoff
+        self.tokenizer_model = tokenizer_model if tokenizer_model is not None else self.model_name
+        self.tokenizer = None
+        self.is_loaded = False
+    
+    def load_model(self):
+        if self.is_chat:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_model)
+        self.is_loaded = True
+
+    def generate(self, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> Completion:
+        if not self.is_loaded:
+            self.load_model()
+
+        if self.is_chat:
+            return self._generate_llm_engine_chat_completion(
+                prompt=message,
+                frequency_penalty=frequency_penalty,
+                max_tokens=max_tokens,
+                presence_penalty=presence_penalty,
+                seed=seed,
+                stop=stop,
+                temperature=temperature,
+                top_p=top_p
+            )
+        else:
+            return self._generate_llm_engine_completion(
+                prompt=message,
+                frequency_penalty=frequency_penalty,
+                max_tokens=max_tokens,
+                presence_penalty=presence_penalty,
+                seed=seed,
+                stop=stop,
+                temperature=temperature,
+                top_p=top_p,
+                timeout=timeout
+            )
+
+    def _generate_llm_engine_chat_completion(self, prompt: list[dict[str, str]], frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], **kwargs) -> Completion:
+        assert self.tokenizer is not None
+        chat_msgs_as_str = self.tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
+        assert isinstance(chat_msgs_as_str, str)
+        return self._generate_llm_engine_completion(chat_msgs_as_str, frequency_penalty=frequency_penalty, max_tokens=max_tokens, presence_penalty=presence_penalty, seed=seed, stop=stop, temperature=temperature, top_p=top_p)
+
+    def _generate_llm_engine_completion(self, prompt: str, frequency_penalty: Optional[float], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], **kwargs) -> Completion:
+        if seed is not None:
+            print("Warning: seed is not used")
+        curr_backoff = self.start_backoff       
+        while 1:
+            try:
+                start = time.time()
+                completion = llmengine.Completion.create(model=self.model_name,
+                                                         prompt=prompt,
+                                        frequency_penalty=frequency_penalty,
+                                        max_new_tokens=max_tokens,
+                                        presence_penalty=presence_penalty,
+                                        stop_sequences=stop,
+                                        temperature=temperature,
+                                        top_p=top_p,
+                                        return_token_log_probs=True,
+                                        )
+                total = time.time() - start
+                if total >= 120:
+                    print(f"Warning: Request took {int(total)} seconds.")
+                break
+            except llmengine.errors.UnknownError as e:
+                random_print(f"Unknown LLMEngine Error: {e}", p=PRINT_P)
+            except llmengine.errors.BadRequestError as e:
+                print(f"Bad Request Error (LLMEngine): {e}")
+                print("^ Prompt:", prompt)
+            except requests.exceptions.ReadTimeout as e:
+                random_print(f"LLMEngineClient: Read Timeout Error: {e}", p=PRINT_P)
+            except requests.exceptions.ConnectionError as e:
+                random_print(f"LLMEngineClient: Connection Error: {e}", p=PRINT_P)
+            except requests.exceptions.RequestException as e:
+                random_print(f"LLMEngineClient: Other Request Exception: {e}", p=PRINT_P)
+
+            curr_backoff = curr_backoff + random.random() * self.JITTER_FACTOR * curr_backoff
+            random_print(f"LLMEngineClient: requerying in {curr_backoff} seconds.", p=PRINT_P)
+            time.sleep(curr_backoff)
+            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR)
+
+
+        o = completion.output.text
+        logprobs = [lp.log_prob for lp in completion.output.tokens]
+        num_tok = len(logprobs)
+        cumulative_logprob = logprobs_to_cumulative(logprobs)
+        return Completion(o, cumulative_logprob, num_tok)
+
+class TogetherClient(LLMClient):
+    JITTER_FACTOR = 2/5
+    BACKOFF_FACTOR = 1.5
+    PARAMS = LLMClient.PARAMS + ["start_backoff", "max_backoff"]
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), start_backoff: float = 21., max_backoff: float = 1.5 * 60) -> None:
+        super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
+        self.start_backoff = start_backoff
+        self.max_backoff = max_backoff
+
+        api_key = os.getenv("TOGETHER_API_KEY")
+        assert api_key is not None
+
+        self.client = together.Together()
+        self.is_loaded = True
+    
+    def generate(self, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> Completion:
+        if not self.is_chat:
+            raise NotImplementedError("Together completion format not implemented.")
+
+        curr_backoff = self.start_backoff
+        while 1:
+            try:
+                start = time.time()
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=message,
+                    frequency_penalty=frequency_penalty,
+                    logit_bias=logit_bias,
+                    logprobs=True,
+                    max_tokens=max_tokens,
+                    presence_penalty=presence_penalty,
+                    stop=stop,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
+                total = time.time() - start
+
+                if total >= 120:
+                    print(f"Warning: Request took {int(total)} seconds.")
+                break
+            # except openai.BadRequestError as e:
+            #     print(f"Bad request: {e}")
+            #     print(message, "\n^ the bad prompt")
+            #     return Completion("No output returned.", -1, 3)
+            except together.error.RateLimitError:
+                random_print("Together rate limit.", p=PRINT_P)
+           
+            curr_backoff = curr_backoff + random.random() * self.JITTER_FACTOR * curr_backoff
+            random_print(f"TogetherClient: requerying in {curr_backoff} seconds.", p=PRINT_P)
+            time.sleep(curr_backoff)
+            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR)
+
+        choice = response.choices[0]
+        o = choice.message.content
+        logprobs = choice.logprobs.token_logprobs  # type: ignore
+        assert o is not None, "Together returned a null response"
+        assert logprobs is not None, "Together returned a null logprobs"
+        num_tokens = len(logprobs)
+        if choice.finish_reason == "length":
+            print("Warning, output clipped.")
+
+        if any(l is None for l in logprobs):
+            print("Warning: None in logprobs...")
+            cumulative_logprob = -1
+            print(f"^ output: {o}")
+        else:
+            cumulative_logprob = logprobs_to_cumulative(logprobs)
+
+        return Completion(o, cumulative_logprob, num_tokens)
+
+class FireworksClient(LLMClient):
+    JITTER_FACTOR = 2/5
+    BACKOFF_FACTOR = 1.5
+    PARAMS = LLMClient.PARAMS + ["start_backoff", "max_backoff"]
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), start_backoff: float = 21., max_backoff: float = 1.5 * 60) -> None:
+        super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
+        self.start_backoff = start_backoff
+        self.max_backoff = max_backoff
+
+        api_key = os.getenv("FIREWORKS_API_KEY")
+        assert api_key is not None
+
+        self.client = openai.OpenAI(api_key=api_key, base_url="https://api.fireworks.ai/inference/v1")
+        self.is_loaded = True
+    
+    def generate(self, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> Completion:
+        if not self.is_chat:
+            raise NotImplementedError("Fireworks completion format not implemented.")
+
+        curr_backoff = self.start_backoff
+        while 1:
+            try:
+                start = time.time()
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=message,
+                    frequency_penalty=frequency_penalty,
+                    logit_bias=logit_bias,
+                    logprobs=True,
+                    max_tokens=max_tokens,
+                    presence_penalty=presence_penalty,
+                    stop=stop,
+                    temperature=temperature,
+                    top_p=top_p,
+                    timeout=timeout,
+                )
+                total = time.time() - start
+
+                if total >= 120:
+                    print(f"Warning: Request took {int(total)} seconds.")
+                break
+            except openai.BadRequestError as e:
+                print(f"Bad request: {e}")
+                print(message, "\n^ the bad prompt")
+                return Completion(self.BAD, -1, 3)
+            except openai.RateLimitError:
+                random_print("Fireworks rate limit.", p=PRINT_P)
+            except openai.APITimeoutError:
+                total = time.time() - start
+                if timeout is not None:
+                    print(f"Fireworks API exceeded timeout of {timeout}. ({total} seconds)")
+                    return Completion(self.TIMEOUT_FLAG, -1, 0)
+                random_print("Fireworks API timeout.", p=PRINT_P)
+            except ReadError:
+                random_print("httpcore ReadError.", p=PRINT_P)
+            except openai.APIConnectionError:
+                random_print("Fireworks API connection error.", p=PRINT_P)
+            except openai.InternalServerError:
+                random_print("Fireworks internal server error.", p=PRINT_P)
+            except json.JSONDecodeError:
+                random_print("(Fireworks) JSON decode error.", p=PRINT_P)
+            except UnicodeDecodeError:
+                random_print("(Fireworks) Unicode decode error.", p=PRINT_P)
+            
+            curr_backoff = curr_backoff + random.random() * self.JITTER_FACTOR * curr_backoff
+            random_print(f"FireworksClient: requerying in {curr_backoff} seconds.", p=PRINT_P)
+            time.sleep(curr_backoff)
+            curr_backoff = min(self.max_backoff, curr_backoff * self.BACKOFF_FACTOR)
+
+        choice = response.choices[0]
+        o = choice.message.content
+        logprobs = choice.logprobs.content  # type: ignore
+        assert o is not None, "Fireworks returned a null response"
+        assert logprobs is not None, "Fireworks returned a null logprobs"
+        logprobs = [l.logprob for l in logprobs]
+        num_tokens = len(logprobs)
+        if choice.finish_reason == "length":
+            print("Warning, output clipped.")
+
+        cumulative_logprob = logprobs_to_cumulative(logprobs)
+        return Completion(o, cumulative_logprob, num_tokens)
+
+
 CLIENT_TYPE_TO_CLASS: dict[str, LLMClient] = {
     "OpenAI": OpenAIClient,
     "Anthropic": AnthropicClient,
     "vLLM": vLLMClient,
     "SGLang": SGLangClient,
+    "DeepSeek": DeepSeekClient,
+    "LLMEngine": LLMEngineClient,
+    "Together": TogetherClient,
+    "Fireworks": FireworksClient,
 }
 
 
 if __name__ == "__main__":
-    print(OpenAIClient.PARAMS)
-    # lc = LLMClient.from_json("model_configs/llama318bi_sglang.json")
-    # print(lc.generate_completions([[{"role": "user", "content": "what is up my dude?"}]] * 100, frequency_penalty=None, logit_bias=None, max_tokens=1000, presence_penalty=None, seed=None, stop=None, temperature=0.5, top_p=1))
+    # print(OpenAIClient.PARAMS)
+    # lc = LLMClient.from_json("model_configs/llama31405bi.json")
+    # lc = LLMClient.from_json("model_configs/llama31405bi_tog.json")
+    lc = LLMClient.from_json("model_configs/llama31405bi_fire.json")
+    print(lc.generate_completions([[{"role": "user", "content": "what is up my dude?"}]] * 100, frequency_penalty=None, logit_bias=None, max_tokens=1000, presence_penalty=None, seed=None, stop=None, temperature=0.5, top_p=1))

@@ -53,7 +53,7 @@ class SimpleIdeaModel(SearchModel):
         # Later do more intelligent selection
         return codes[0]
 
-    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
+    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[list[str]]:
         log_dict = []
 
         get_nl_sols_prompt = [self.get_nl_sols_prompt(problem) for problem in problems]
@@ -101,7 +101,7 @@ class SimpleIdeaModel(SearchModel):
         ]
         log_to_dir(self.experiment_directory, {f"log_{datetime.datetime.now().strftime('%m-%dT%H:%M:%S')}.json": log_dict})
 
-        return output_codes
+        return [[c] for c in output_codes]
 
 
 def add_simple_idea_args(parser: argparse.ArgumentParser):

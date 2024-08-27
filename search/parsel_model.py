@@ -24,7 +24,7 @@ class ParselModel(SearchModel):
         super().__init__(model_name, args.experiment_directory, cache_file=args.cache_file)
         self.args = deepcopy(args)
     
-    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
+    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[list[str]]:
         outputs = []
         for i, problem in enumerate(problems):
             output = compute_parsel_output(problem, self.args, self.querier, os.path.join(self.experiment_directory, f"prob-{i:03}"))
@@ -39,7 +39,7 @@ class ParselModel(SearchModel):
                 impl += CONVERT_FN_TO_STDIO.format(root=root_name)
             outputs.append(impl)
 
-        return outputs
+        return [[c] for c in outputs]
 
 
 def add_parsel_args(parser: argparse.ArgumentParser):

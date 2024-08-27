@@ -1,0 +1,8 @@
+{
+    "client_type": "DeepSeek",
+    "model_name": "deepseek-coder",
+    "is_chat": true,
+    "is_batched": false,
+    "num_workers": 1024,
+    "price_per_input_output": [0.14e-6, 0.28e-6]
+}

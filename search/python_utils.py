@@ -10,10 +10,10 @@ from enum import Enum
 T = TypeVar('T')
 U = TypeVar('U')
 
-RNestListT = Union[T, List["RNestListT"]]
-RNestListU = Union[U, List["RNestListU"]]
-LiRNestListT = List[RNestListT]
-LiRNestListU = List[RNestListU]
+RNestListT = Union[T, list["RNestListT"]]
+RNestListU = Union[U, list["RNestListU"]]
+LiRNestListT = list[RNestListT]
+LiRNestListU = list[RNestListU]
 
 
 def nested_list_len(li: LiRNestListT) -> int:
@@ -40,6 +40,24 @@ def merge_nested_lists(li1: RNestListT, li2: RNestListT) -> RNestListU:
     assert isinstance(li1, list) and (len(li1) == len(li2))
     for sub_li1, sub_li2 in zip(li1, li2):
         output_list.append(merge_nested_lists(sub_li1, sub_li2))
+    return output_list
+
+def map_nary_fn_on_nested_list(fn, *args: *tuple[RNestListT[T]]) -> RNestListU[U]:
+    assert len(args) > 0
+    # Checking types of args
+    for li in args:
+        if isinstance(args[0], list):
+            assert isinstance(li, list)
+            assert len(args[0]) == len(li)
+        else:
+            assert not isinstance(li, list)
+
+    if not isinstance(args[0], list):
+        return fn(*args)
+
+    output_list = []
+    for sub_lists in zip(*args):
+        output_list.append(map_nary_fn_on_nested_list(fn, *sub_lists))
     return output_list
 
 def index_nested_list(li: LiRNestListT, items: list[T], actions: list[Action]) -> None:
@@ -77,7 +95,7 @@ def _format_from_actions(outputs: list[T], actions: list[Action]) -> LiRNestList
 
     return formatted_output
 
-def batch_map_on_nested_list(li: LiRNestListT, fn: Callable[[List[T]], List[U]]) -> LiRNestListU:
+def batch_map_on_nested_list(li: LiRNestListT, fn: Callable[[list[T]], list[U]]) -> LiRNestListU:
     assert isinstance(li, list)
     items = []
     actions = []
@@ -90,9 +108,6 @@ def batch_map_on_nested_list(li: LiRNestListT, fn: Callable[[List[T]], List[U]])
     assert isinstance(formatted_outputs, list)
 
     return formatted_outputs
-
-def map_on_nested_list(li: LiRNestListT, fn: Callable[[T], U]) -> LiRNestListU:
-    return batch_map_on_nested_list(li, lambda li: [fn(x) for x in li])
 
 
 def stringify(x: Any) -> str:
@@ -183,3 +198,4 @@ if __name__ == "__main__":
     print(lol)
     # print(batch_map_on_nested_list(lol, lambda x: [str(s) for s in x]))
     print(merge_nested_lists(lol, lol1))
+    print(map_nary_fn_on_nested_list(lambda x1, x2: str(x1) + "|" + str(x2), lol, lol1))

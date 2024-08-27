@@ -42,7 +42,7 @@ class OnePromptModel(SearchModel):
     def format_problem_to_prompt(self, problem: Problem) -> Prompt:
         pass
 
-    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
+    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[list[str]]:
         problem_prompts = [self.format_problem_to_prompt(problem) for problem in problems]
 
         stop = [self.stop] if isinstance(self.stop, str) else self.stop
@@ -65,9 +65,9 @@ class OnePromptModel(SearchModel):
                               timeout=120,
                               )
         if self.is_chat:
-            return [markdown_codeblock_extract(genned).strip() for genned in generated]
+            return [[markdown_codeblock_extract(genned).strip()] for genned in generated]
         else:
-            return [problem.starter_code.rstrip() + '\n' + genned if problem.has_starter_code() else genned for genned, problem in zip(generated, problems)]
+            return [[problem.starter_code.rstrip() + '\n' + genned] if problem.has_starter_code() else [genned] for genned, problem in zip(generated, problems)]
 
 
 class BasicPromptModel(OnePromptModel):

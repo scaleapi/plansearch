@@ -1,0 +1,9 @@
+{
+    "client_type": "SGLang",
+    "model_name": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+    "base_url": "http://localhost:30000",
+    "is_chat": true,
+    "is_batched": true,
+    "batch_size": 32768,
+    "price_per_input_output": [0, 0]
+}

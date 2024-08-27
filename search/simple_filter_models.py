@@ -3,8 +3,7 @@ import argparse
 from pathlib import Path
 import os
 
-from python_utils import log_to_dir  
-
+from search.python_utils import log_to_dir  
 from search.base_classes import Problem, SearchModel
 from search.one_prompt_models import BasicPromptModel, add_basic_prompting_args, get_basic_prompting_model
 from search.simple_idea_model import SimpleIdeaModel, add_simple_idea_args, get_simple_idea_model
@@ -24,6 +23,7 @@ class SimpleFilteringModel(SearchModel):
         self.num_workers = num_workers
         self.testbank = testbank
         self.executor = executor
+        raise NotImplementedError("Code branch not maintained")
 
     def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:        
         selected_codes: list[Optional[str]] = [None] * len(problems)
@@ -37,7 +37,7 @@ class SimpleFilteringModel(SearchModel):
             generated = self.base_search_model.generate_solutions(tiled_problems)
             assert len(generated) == len(tiled_problems)
 
-            results = run_tests_per_code(generated, [problem.public_tests for problem in tiled_problems], [self.timeout] * len(tiled_problems), testbank=self.testbank, num_workers=self.num_workers, executor=self.executor)
+            results = run_tests_per_code(generated, [problem.get_test_public() for problem in tiled_problems], [self.timeout] * len(tiled_problems), fn_names_pc=[problem.fn_name for problem in tiled_problems], testbank=self.testbank, num_workers=self.num_workers, executor=self.executor)
 
             for i, result in enumerate(results):
                 original_idx = unsolved_idxs[i % len(unsolved_problems)]
@@ -49,8 +49,11 @@ class SimpleFilteringModel(SearchModel):
             # Logging
             result_log = []
             for i in range(len(unsolved_problems)):
+                public_tests = unsolved_problems[i].get_test_public()
+                log_tests = public_tests if isinstance(public_tests, str) else [test.to_repr_dict() for test in public_tests]
+
                 sub_dict = {"problem_str": unsolved_problems[i].problem_str, 
-                            "tests": [test.to_repr_dict() for test in unsolved_problems[i].public_tests],
+                           "tests": log_tests,
                             "gens": []}
                 for j in range(self.gen_batch_size):
                     sub_dict["gens"].append({"code": generated[i + len(unsolved_problems) * j],

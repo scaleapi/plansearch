@@ -1,0 +1,8 @@
+{
+    "client_type": "Fireworks",
+    "model_name": "accounts/fireworks/models/llama-v3p1-405b-instruct",
+    "is_chat": true,
+    "is_batched": false,
+    "num_workers": 1024,
+    "price_per_input_output": [3e-6, 3e-6]
+}

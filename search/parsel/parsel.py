@@ -1,5 +1,4 @@
 import argparse
-from queriers import LLMQuerier
 import itertools
 from tqdm import tqdm
 import random
@@ -9,6 +8,7 @@ import os
 import sys
 from uuid import uuid4
 
+from search.queriers import LLMQuerier
 from search.exec_utils import check_fn, run_tests_per_code, get_passed_tests_and_errors
 from search.parsel.construct_graph import strongly_connected_components, get_root
 from search.parsel.parsel_queries import gen_fn_implementations, gen_fn_tests

@@ -2,8 +2,8 @@ from typing import List, Any, Optional, Union
 import argparse
 import os
 
-from base_classes import Problem, SearchModel
-from parsing_utils import markdown_codeblock_extract
+from search.base_classes import Problem, SearchModel
+from search.parsing_utils import markdown_codeblock_extract
 from search.model_config_utils import add_model_config_args, parse_args_for_model_client
 
 
@@ -63,7 +63,7 @@ class BackTranslateModel(SearchModel):
                               log_name="codes",
                               requery=True,
                               )
-        return [markdown_codeblock_extract(genned).strip() for genned in generated]
+        return [[markdown_codeblock_extract(genned).strip()] for genned in generated]
 
 
 def add_backtranslate_args(parser: argparse.ArgumentParser):

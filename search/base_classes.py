@@ -197,7 +197,7 @@ class Problem:
         assert len(tests["inputs"]) == len(tests["outputs"])
         test_list = [Test((wrap_list(inp), {}), out, fn_name, has_Solution) for inp, out in zip(tests["inputs"], tests["outputs"])]
 
-        return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, public_exec_string=public_tests["exec_string"], private_exec_string=tests["exec_string"], solutions=solutions, fail_codes=fail_codes)
+        return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, fn_name=fn_name, public_exec_string=public_tests["exec_string"], private_exec_string=tests["exec_string"], solutions=solutions, fail_codes=fail_codes)
 
 
 class SearchModel(BaseModel, ABC):
@@ -214,13 +214,14 @@ class SearchModel(BaseModel, ABC):
         return [{"problem_str": question, "starter_code": code, "public_tests": public_tests, "tests": tests, "solutions": solutions}]
 
     @abstractmethod
-    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[str]:
+    def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[list[str]]:
         pass
     
     def generate_with_info(self, prompts: List[Prompt], **kwargs) -> List[Completion]:
         if len(kwargs):
             print("Warning: kwargs not used")
         problems = [Problem.from_coderm_item(prompt[0]["problem_str"], starter_code=prompt[0]["starter_code"], public_tests=prompt[0]["public_tests"], tests=prompt[0]["tests"], solutions=prompt[0]["solutions"]) for prompt in prompts]
+        raise NotImplementedError("Code branch not maintained")
         solutions = self.generate_solutions(problems)
         return [Completion(code, -1, -1) for code in solutions]
     

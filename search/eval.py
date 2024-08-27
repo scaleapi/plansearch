@@ -174,14 +174,13 @@ def generate_and_eval(search_alg: str):
 
     codes_results_dict = {}
     for split in splits:
-        codes, results = do_full_run(model, args.dataset, split, args.completion_limit, args.completions_from_model, experiment_dir_output + split, exec_public=args.exec_public, testbank=args.testbank, num_workers=args.exec_batch_size, executor=args.executor, timeout=args.timeout)
+        codes, results = do_full_run(model, args.dataset, split, args.completion_limit, args.completions_from_model, experiment_dir_output + "_" + split, exec_public=args.exec_public, testbank=args.testbank, num_workers=args.exec_batch_size, executor=args.executor, timeout=args.timeout)
         codes_results_dict[split] = (codes, results)
 
     if output_result_path is not None:
         Path(os.path.dirname(output_result_path)).mkdir(parents=True, exist_ok=True)
-        print(f"Copying output file from {experiment_dir_output + splits[-1]} to {args.output}")
-        shutil.copyfile(experiment_dir_output + splits[-1], output_result_path)
-
+        print(f"Copying output file from {experiment_dir_output + '_' + splits[-1]} to {args.output}")
+        shutil.copyfile(experiment_dir_output + "_" + splits[-1], output_result_path)
 
     if args.output_dataset is not None:
         problems_dict = {}
