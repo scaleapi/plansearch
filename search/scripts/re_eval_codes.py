@@ -1,16 +1,31 @@
 import argparse
 import os
-import shutil
+import datetime
+import tqdm
 
 from search.exec_utils import run_tests_per_code
 from coderm.utils import gunzip_json_read, gunzip_json_write
 from search.dataset_utils import parse_dataset
 from search.eval import add_executor_args
+from search.python_utils import chunk
+
+
+def save_data(data: dict, args: argparse.Namespace, og: bool = False):
+    current_time = datetime.datetime.now().strftime("%m%d_%H%M%S")
+    if og:
+        filename = f"og_{args.results_filename}_{current_time}"
+    else:
+        filename = f"{args.results_filename}_{current_time}"
+    save_path = os.path.join(args.backup_directory, filename)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    print(f"Saving to {save_path}...")
+    gunzip_json_write(save_path, data)
 
 
 def main(args: argparse.Namespace):
     data = gunzip_json_read(args.results_path)
     problems = parse_dataset(data["dataset_name"], args.split)
+    save_data(data, args, og=True)
 
     if args.test_type == "public":
         test_types = ["public"]
@@ -31,7 +46,11 @@ def main(args: argparse.Namespace):
         for result in item["results"]:
             codes.append(result["code"])
         all_codes.append(codes)
-        assert i == int(item["unique_name"])
+        try:
+            unique_id = int(item["unique_name"])
+        except:
+            unique_id = None
+        assert i == unique_id or problems[i].problem_str.strip() == item["prompt"].strip()
 
     tests = {
         "public": [problem.get_test_public() for problem in problems],
@@ -54,11 +73,6 @@ def main(args: argparse.Namespace):
         flattened_codes.extend(codes)
 
     for test_type in test_types:
-        flattened_tests = [tests[test_type][og_idx] for og_idx in og_idxs]
-        assert len(flattened_tests) == len(flattened_codes)
-
-        results = run_tests_per_code(flattened_codes, flattened_tests, [args.timeout] * len(flattened_codes), fn_names_pc=[problems[og_idx].fn_name for og_idx in og_idxs], num_workers=args.exec_batch_size, testbank=testbank, executor=args.executor)
-        
         if test_type == "public":
             bool_name = "passing_public"
             str_name = "output_public"
@@ -66,13 +80,57 @@ def main(args: argparse.Namespace):
             bool_name = "passing"
             str_name = "output"
 
-        for og_idx, og_specific_idx, result in zip(og_idxs, og_specific_idxs, results):
-            data["items"][og_idx]["results"][og_specific_idx][bool_name] = result[0]
-            data["items"][og_idx]["results"][og_specific_idx][str_name] = result[1]
+        flattened_tests = [tests[test_type][og_idx] for og_idx in og_idxs]
+        assert len(flattened_tests) == len(flattened_codes)
 
-    print(f"Copying {args.results_path} to {args.backup_file}...")
-    shutil.copyfile(args.results_path, args.backup_file)
-    print(f"Writing new data to {args.results_path}...")
+        if args.overwrite:
+            write_idxs = list(range(len(flattened_tests)))
+        else:
+            write_idxs = []
+            for i, (og_idx, og_specific_idx) in enumerate(zip(og_idxs, og_specific_idxs)):
+                passed = data["items"][og_idx]["results"][og_specific_idx].get(bool_name, None)
+                output = data["items"][og_idx]["results"][og_specific_idx].get(str_name, None)
+                assert (passed is None) == (output is None)
+                if passed is None:
+                    write_idxs.append(i)
+
+        if len(write_idxs) == 0:
+            print(f"0 tests... Skipping {test_type} test execution.")
+            continue
+
+        print(f"Running {len(write_idxs)} {test_type} tests...")
+        
+        codes_to_run = list(chunk([flattened_codes[i] for i in write_idxs], args.save_every))
+        tests_to_run = list(chunk([flattened_tests[i] for i in write_idxs], args.save_every))
+        og_idxs_to_run = list(chunk([og_idxs[i] for i in write_idxs], args.save_every))
+        og_specific_idxs_to_run = list(chunk([og_specific_idxs[i] for i in write_idxs], args.save_every))
+
+        total = 0
+        for i, (chunk_codes, chunk_tests, chunk_og_idxs, chunk_og_specific_idxs) in enumerate(tqdm.tqdm(list(zip(codes_to_run, tests_to_run, og_idxs_to_run, og_specific_idxs_to_run)))):
+            chunk_results = run_tests_per_code(
+                chunk_codes, chunk_tests, 
+                [args.timeout] * len(chunk_codes),
+                fn_names_pc=[problems[og_idx].fn_name for og_idx in chunk_og_idxs],
+                num_workers=args.exec_num_processes,
+                total_num_concurrent=args.exec_batch_size,
+                testbank=testbank,
+                executor=args.executor,
+                return_none=True
+            )
+            total += len(chunk_results)
+
+            for og_idx, og_specific_idx, result in zip(chunk_og_idxs, chunk_og_specific_idxs, chunk_results):
+                if result is not None:
+                    data["items"][og_idx]["results"][og_specific_idx][bool_name] = result[0]
+                    data["items"][og_idx]["results"][og_specific_idx][str_name] = result[1]
+
+            print(f"Finished chunk {i+1}/{len(codes_to_run)} with {len(chunk_results)} tests...")
+            save_data(data, args)
+            gunzip_json_write(args.results_path, data)
+            print("Done saving for iteration.")
+        assert total == len(write_idxs)
+
+    print(f"Final: Writing new data to {args.results_path}...")
     gunzip_json_write(args.results_path, data)
 
 
@@ -81,12 +139,15 @@ if __name__ == "__main__":
     parser.add_argument("--results-path", required=True, type=str, help="The json.gz file with results")
     parser.add_argument("--split", default="test", type=str, help="The split of the dataset to use. Usually is 'test'")
     parser.add_argument("--test-type", default="public", type=str, choices=["public", "private", "both"], help="Which type of tests to run")
-    parser.add_argument("--backup-file", default=None, type=str, help="Where to save the backup file. Default is to save to prefixed old_<results_file>")
+    parser.add_argument("--backup-directory", default=None, type=str, help="Where to save the backup file. Default is to save to old_results")
+    parser.add_argument("--overwrite", action="store_true", help="Whether to overwrite existing execution results")
+    parser.add_argument("--save-every", default=None, type=int, help="Save to results file every X tests run. Does not save if default.")
     add_executor_args(parser)
 
     args = parser.parse_args()
-    if args.backup_file is None:
+    if args.backup_directory is None:
         results_dir, results_file = os.path.split(args.results_path)
-        args.backup_file = os.path.join(results_dir, f"old_{results_file}")
+        args.backup_directory = os.path.join(results_dir, "old_results")
+        args.results_filename = results_file
 
     main(args)

@@ -23,7 +23,7 @@ do
             --split test \
             --testbank $testbank \
             --cache-file caches/${model}_${dataset}_cache.json \
-            --exec-public \
+            --exec-type both \
             --exec-batch-size 325 \
             --global-batch-size 12288
             
@@ -42,7 +42,7 @@ do
         #     --split test \
         #     --testbank $testbank \
         #     --cache-file caches/${model}_${dataset}_cache.json \
-        #     --exec-public \
+        #     --exec-type both \
         #     --exec-batch-size 275
     done
 done

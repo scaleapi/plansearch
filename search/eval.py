@@ -54,8 +54,14 @@ def add_executor_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--exec-batch-size",
         type=int,
+        default=1000,
+        help="Total num concurrent requests for execution"
+    )
+    parser.add_argument(
+        "--exec-num-processes",
+        type=int,
         default=cpu_count,
-        help="Total batch size for execution (defaults to os.cpu_count())"
+        help="Total number of processes to use for execution (defaults to os.cpu_count())"
     )
     parser.add_argument(
         "--executor",
@@ -103,9 +109,11 @@ def add_universal_args(parser: argparse.ArgumentParser):
         help="Split of the dataset to evaluate/generate from"
     )
     parser.add_argument(
-        "--exec-public",
-        action="store_true",
-        help="Whether to execute public tests as well",
+        "--exec-type",
+        type=str,
+        choices=["none", "private", "both"],
+        default="both",
+        help="Which tests to execute. (Default both public and private.)",
         )
     parser.add_argument(
         "--output-dataset",
@@ -172,9 +180,12 @@ def generate_and_eval(search_alg: str):
 
     model = SEARCH_ALGS_TO_GET_ARGS_MODEL[search_alg][1](args)
 
+    if args.output_dataset is not None:
+        assert args.exec_type != "none"
+
     codes_results_dict = {}
     for split in splits:
-        codes, results = do_full_run(model, args.dataset, split, args.completion_limit, args.completions_from_model, experiment_dir_output + "_" + split, exec_public=args.exec_public, testbank=args.testbank, num_workers=args.exec_batch_size, executor=args.executor, timeout=args.timeout)
+        codes, results = do_full_run(model, args.dataset, split, args.completion_limit, args.completions_from_model, experiment_dir_output + "_" + split, exec_type=args.exec_type, testbank=args.testbank, num_workers=args.exec_num_processes, total_num_concurrent=args.exec_batch_size, executor=args.executor, timeout=args.timeout)
         codes_results_dict[split] = (codes, results)
 
     if output_result_path is not None:

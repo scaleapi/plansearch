@@ -4,12 +4,12 @@ do
     # for model in baby-deepseek-i_sgl baby-deepseek-b_sgl
     # for model in llama318b_sgl
     do
-        # python scripts/check_similar.py \
-        #     --model-config-path model_configs/gpt-4o-mini.json \
-        #     --results-file final_results/${dataset}/basic_prompting225_${model}_temp0.9 \
-        #     --log-directory other_logs/similar_logs/final_logs/${dataset}/basic_prompting225_${model}_temp0.9 \
-        #     --cache-file caches/check_similar_cache.json \
-        #     --max-to-consider 40
+        python scripts/check_similar.py \
+            --model-config-path model_configs/gpt-4o-mini.json \
+            --results-file final_results/${dataset}/basic_prompting225_${model}_temp0.9 \
+            --log-directory other_logs/similar_logs/final_logs/${dataset}/basic_prompting225_${model}_temp0.9 \
+            --cache-file caches/${dataset}_${model}_basic_prompting_check_similar_cache.json \
+            --max-to-consider 40
 
         # python scripts/check_similar.py \
         #     --model-config-path model_configs/gpt-4o-mini.json \

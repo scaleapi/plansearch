@@ -29,6 +29,8 @@ from search.python_utils import chunk, random_print
 
 PRINT_P = 1
 
+def check_if_o1(model_name: str) -> bool:
+    return model_name.startswith("o1-")
 
 class LLMClient:
     PARAMS = ["model_name", "is_chat", "is_batched", "batch_size", "num_workers", "price_per_input_output"]
@@ -174,7 +176,8 @@ class OpenAIClient(LLMClient):
         self.max_backoff = max_backoff
         self.client = openai.OpenAI()
         self.is_loaded = True
-    
+        self.model_is_o1 = check_if_o1(self.model_name)
+   
     def generate(self, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> Completion:
         if not self.is_chat:
             raise NotImplementedError("OpenAIClient completion format not implemented.")
@@ -208,20 +211,40 @@ class OpenAIClient(LLMClient):
                 #     json.dump(query_log, log_file)
 
                 start = time.time()
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=message,
-                    frequency_penalty=frequency_penalty,
-                    logit_bias=logit_bias,
-                    logprobs=True,
-                    max_tokens=max_tokens,
-                    presence_penalty=presence_penalty,
-                    seed=seed,
-                    stop=stop,
-                    temperature=temperature,
-                    top_p=top_p,
-                    timeout=timeout,
-                )
+                if self.model_is_o1:
+                    assert stop is None or stop == []
+                    assert temperature == 1
+                    assert top_p == 1
+                    assert frequency_penalty is None or frequency_penalty == 0
+                    assert presence_penalty is None or presence_penalty == 0
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=message,
+                        frequency_penalty=0,
+                        logit_bias=logit_bias,
+                        logprobs=False,
+                        max_completion_tokens=max_tokens,
+                        presence_penalty=0,
+                        seed=seed,
+                        temperature=temperature,
+                        top_p=top_p,
+                        timeout=timeout,
+                    )
+                else:
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=message,
+                        frequency_penalty=frequency_penalty,
+                        logit_bias=logit_bias,
+                        logprobs=True,
+                        max_tokens=max_tokens,
+                        presence_penalty=presence_penalty,
+                        seed=seed,
+                        stop=stop,
+                        temperature=temperature,
+                        top_p=top_p,
+                        timeout=timeout,
+                    )
                 total = time.time() - start
 
                 if total >= 120:
@@ -275,15 +298,27 @@ class OpenAIClient(LLMClient):
 
         choice = response.choices[0]
         o = choice.message.content
-        logprobs = choice.logprobs.content  # type: ignore
+        if o is None:
+            breakpoint()
+
+        if not self.model_is_o1:
+            if choice.logprobs is None:
+                breakpoint()
+                print("Warning null logprobs")
+                cumulative_logprob = -1
+            else:
+                logprobs = choice.logprobs.content  # type: ignore
+                logprobs = [l.logprob for l in logprobs]
+                cumulative_logprob = logprobs_to_cumulative(logprobs)
+        else:
+            cumulative_logprob = -1
+            
         assert o is not None, "OpenAI returned a null response"
-        assert logprobs is not None, "OpenAI returned a null logprobs"
-        logprobs = [l.logprob for l in logprobs]
-        num_tokens = len(logprobs)
+        num_tokens = response.usage.completion_tokens
+        print("NUM TOKENS:", num_tokens)
         if choice.finish_reason == "length":
             print("Warning, output clipped.")
 
-        cumulative_logprob = logprobs_to_cumulative(logprobs)
         return Completion(o, cumulative_logprob, num_tokens)
 
 
@@ -789,13 +824,14 @@ class FireworksClient(LLMClient):
     JITTER_FACTOR = 2/5
     BACKOFF_FACTOR = 1.5
     PARAMS = LLMClient.PARAMS + ["start_backoff", "max_backoff"]
-    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), start_backoff: float = 21., max_backoff: float = 1.5 * 60) -> None:
+    def __init__(self, model_name: str, is_chat: bool, is_batched: bool, batch_size: Optional[int] = None, num_workers: Optional[int] = None, price_per_input_output: tuple[float, float] = (0., 0.), start_backoff: float = 30., max_backoff: float = 1.5 * 60) -> None:
         super().__init__(model_name=model_name, is_chat=is_chat, is_batched=is_batched, batch_size=batch_size, num_workers=num_workers, price_per_input_output=price_per_input_output)
         self.start_backoff = start_backoff
         self.max_backoff = max_backoff
 
         api_key = os.getenv("FIREWORKS_API_KEY")
         assert api_key is not None
+        assert api_key.endswith("veh")
 
         self.client = openai.OpenAI(api_key=api_key, base_url="https://api.fireworks.ai/inference/v1")
         self.is_loaded = True

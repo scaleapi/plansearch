@@ -1,0 +1,8 @@
+{
+    "client_type": "OpenAI",
+    "model_name": "o1-mini",
+    "is_chat": true,
+    "is_batched": false,
+    "num_workers": 1024,
+    "price_per_input_output": [3e-6, 12e-6]
+}

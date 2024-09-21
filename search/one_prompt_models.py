@@ -62,7 +62,7 @@ class OnePromptModel(SearchModel):
                               top_p=self.top_p,
                               log_name="solution_queries",
                               requery=True,
-                              timeout=120,
+                              timeout=1000,
                               )
         if self.is_chat:
             return [[markdown_codeblock_extract(genned).strip()] for genned in generated]

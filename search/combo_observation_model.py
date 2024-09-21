@@ -15,7 +15,7 @@ from search.model_config_utils import add_model_config_args, parse_args_for_mode
 class ComboObservationModel(SearchModel):
     import search.prompts.combo_observation_prompts as prompts
     COMPLETION_FROM_MODEL_SUPPORTED = True
-    def __init__(self, idea_model_config_path: str, code_model_config_path: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, querier_batch_size: Optional[int] = 12_288, max_observation_k: int = 2, num_observations_to_generate: int = 10, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None, timeout: int = 30, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000"):
+    def __init__(self, idea_model_config_path: str, code_model_config_path: str, experiment_directory: Optional[str] = None, cache_file: Optional[str] = None, querier_batch_size: Optional[int] = 12_288, max_observation_k: int = 2, num_observations_to_generate: int = 10, frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, idea_temperature: Optional[float] = None, code_temperature: Optional[float] = None, top_p: Optional[float] = None,):
         super().__init__("observation", experiment_directory=experiment_directory, cache_file=cache_file, querier_batch_size=querier_batch_size)
 
         self.idea_model = idea_model_config_path
@@ -34,10 +34,6 @@ class ComboObservationModel(SearchModel):
 
         self.max_observation_k = max_observation_k
         self.num_observations_to_generate = num_observations_to_generate
-        self.timeout = timeout
-        self.num_workers = num_workers
-        self.testbank = testbank
-        self.executor = executor
 
   
     def query_model(self, model_type: str, prompts: list[list[dict[str, str]]], temperature: Optional[float] = None) -> list[str]:
@@ -173,11 +169,6 @@ class ComboObservationModel(SearchModel):
                  {"role": "user", "content": self.prompts.get_nl_solution_from_obs_combo(problem.problem_str, observation_combo)}]
         return convo
     
-    def get_criticsm_prompt(self, problem: Problem, nl_solution: str) -> list[dict[str, str]]:
-        convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_CRITIC},
-                 {"role": "user", "content": self.prompts.get_criticsm_from_nl_sol(problem.problem_str, nl_solution)}]
-        return convo
-
     def get_merge_fixes_prompt(self, problem: Problem, nl_solution: str, fixes: str) -> list[dict[str, str]]:
         convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_MERGE_FIXES},
                  {"role": "user", "content": self.prompts.get_merge_orig_fix(problem.problem_str, nl_solution, fixes)}]
@@ -191,15 +182,15 @@ class ComboObservationModel(SearchModel):
                               for problem, observation_combo in zip(problems, observation_combos)]
         nl_solutions = self.query_model("idea", get_nl_sols_prompt)
 
-        get_criticsm_prompts = [self.get_criticsm_prompt(problem, nl_solution)
+        get_criticism_prompts = [self.prompts.get_criticism_prompt(problem, nl_solution)
                                for problem, nl_solution in zip(problems, nl_solutions)]
-        criticisms = self.query_model("idea", get_criticsm_prompts)
+        criticisms = self.query_model("idea", get_criticism_prompts)
 
         get_fixes_prompts = [prompt + [
                                         {"role": "assistant", "content": criticism},
                                         {"role": "user", "content": self.prompts.FIX_CRITICISM_PROMPT}
                                     ]
-                                 for prompt, criticism in zip(get_criticsm_prompts, criticisms)]
+                                 for prompt, criticism in zip(get_criticism_prompts, criticisms)]
         fixes = self.query_model("idea", get_fixes_prompts)
 
         logs = [{"problem_str": problems[i].problem_str, "observation_combo": observation_combos[i], "original_solution": nl_solutions[i], "criticism": criticisms[i], "fixes": fixes[i]} for i in range(len(problems))]
@@ -285,10 +276,7 @@ class ComboObservationModel(SearchModel):
         return [(problem, code, log) for problem, code, log in zip(expanded_problems, parsed_codes, logs)]
 
     def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[list[str]]:
-        completions_from_model: bool = kwargs.get("completions_from_model", False)
-        num_completions = 1
-        if completions_from_model:
-            num_completions = kwargs.get("num_completions", 1)
+        num_completions = kwargs.get("num_completions", 1)
 
         observations_lists_logs = self.get_observations_strs([(problem, None) for problem in problems], iter_num=0)
         observations1_lists = [obs_list for obs_list, _ in observations_lists_logs]
@@ -335,7 +323,6 @@ class ComboObservationModel(SearchModel):
         code_sols_and_logs = batch_map_on_nested_list(problem_nl_solutions, self.get_code_solution_from_nl_solutions)
         # code_sols_and_logs = batch_map_on_nested_list(problem_observation_combos, self.get_code_solution_from_obs_combos)
 
-        code_probs: list[list[list[Problem]]] = map_nary_fn_on_nested_list(lambda x: x[0], code_sols_and_logs)
         code_sols: list[list[list[str]]] = map_nary_fn_on_nested_list(lambda x: x[1], code_sols_and_logs)
         code_logs: list[list[list[dict[str, Any]]]] = map_nary_fn_on_nested_list(lambda x: x[2], code_sols_and_logs)
 
@@ -405,7 +392,6 @@ def add_combo_observation_args(parser: argparse.ArgumentParser):
     )
 
 def get_combo_observation_model(args: argparse.Namespace) -> SearchModel:
-    assert args.exec_public
     idea_model_path = parse_args_for_model_client(args, model_config_name="idea_model", temp_folder_base=args.experiment_directory)
     code_model_path = parse_args_for_model_client(args, model_config_name="code_model", temp_folder_base=args.experiment_directory)
-    return ComboObservationModel(idea_model_config_path=idea_model_path, code_model_config_path=code_model_path, experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, seed=args.seed, max_observation_k=args.max_observation_k, num_observations_to_generate=args.num_observations_to_generate, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, timeout=args.timeout, num_workers=args.exec_batch_size, testbank=args.testbank, executor=args.executor)
+    return ComboObservationModel(idea_model_config_path=idea_model_path, code_model_config_path=code_model_path, experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, seed=args.seed, max_observation_k=args.max_observation_k, num_observations_to_generate=args.num_observations_to_generate, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens,)

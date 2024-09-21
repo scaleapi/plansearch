@@ -24,7 +24,7 @@ do
             --split test \
             --testbank $testbank \
             --cache-file caches/${model}_${dataset}_combo_observation_cache.json \
-            --exec-public \
+            --exec-type both \
             --exec-batch-size 275 \
             --completions-from-model
 
@@ -40,7 +40,7 @@ do
         #     --split test \
         #     --testbank $testbank \
         #     --cache-file caches/${model}_${dataset}_cache.json \
-        #     --exec-public \
+        #     --exec-type both \
         #     --exec-batch-size 275
 
         # SEARCH_ALG="simple_idea" \
@@ -57,7 +57,7 @@ do
         #     --split test \
         #     --testbank $testbank \
         #     --cache-file caches/${model}_${dataset}_cache.json \
-        #     --exec-public \
+        #     --exec-type both \
         #     --exec-batch-size 275
     done
 done

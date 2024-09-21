@@ -20,7 +20,7 @@ import warnings
 
 from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
-from search.query_clients import LLMClient
+from search.query_clients import LLMClient, OpenAIClient
 from search.python_utils import autodetect_dtype_str, chunk
 
 
@@ -252,6 +252,11 @@ def _generate_completions(client: LLMClient, messages: Union[list[Prompt], tuple
                 pbar.update(1)
         else:
             cache_keys.append((i, cache_key))
+            if isinstance(client, OpenAIClient):
+                if client.model_is_o1:
+                    assert isinstance(prompt, (list, tuple))
+                    if prompt[0]["role"] == "system":
+                        prompt = prompt[1:]
             to_generate.append(prompt)
     
     generated_completions, cost = client.generate_completions(messages=to_generate,
@@ -277,7 +282,7 @@ def _generate_completions(client: LLMClient, messages: Union[list[Prompt], tuple
 
 if __name__ == "__main__":
     print("starting basic query...")
-    llmq = LLMQuerier("temp_logs", "temp_cache.json", 10)
+    llmq = LLMQuerier("temp_logs", None, 10)
     # print(llmq.generate("meta-llama/Meta-Llama-3-405B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("meta-llama/Meta-Llama-3-8B-Instruct", [[{"role": "user", "content": "Please count to 10."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("model_configs/deepseek-coder.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "keeeeeey"}]] * 4, max_tokens=100, temperature=0.1, top_p=0.9))
@@ -285,5 +290,6 @@ if __name__ == "__main__":
     # print(llmq.generate("model_configs/model_configs/hsg_1.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "keeeeeey"}]] * 4, max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("claude-3-5-sonnet-20240620", ["What is up?"], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("model_configs/sonnet-3-5.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "Please count to 100, backwards."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
-    print(llmq.generate("model_configs/llama31405bi_fire.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "Please count to 100, backwards."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
+    # print(llmq.generate("model_configs/llama31405bi_fire.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "Please count to 100, backwards."}]], max_tokens=1000, temperature=0.1, top_p=0.9))
     # print(llmq.generate("model_configs/llama31405bi.json", [[{"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "keeeeeey"}]] * 4, max_tokens=100, temperature=0.1, top_p=0.9))
+    print(llmq.generate("model_configs/o1-preview.json", [[{"role": "system", "content": "You are an expert counter."}, {"role": "user", "content": "Please count to 10."}], [{"role": "user", "content": "Please count to 100, backwards."}]], max_tokens=1000, temperature=1, top_p=1))

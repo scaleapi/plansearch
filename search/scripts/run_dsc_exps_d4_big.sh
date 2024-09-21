@@ -1,9 +1,8 @@
 # for model in gpt-4o-mini gpt-4o deepseek-coder sonnet-3-5
-# for model in baby-deepseek-i_sgl
-# for model in llama3170b_sgl
-for model in llama318b_sgl
+for model in baby-deepseek-i_sgl
 do
-    for dataset in mbpp_plus human_eval_plus livecodebench_lite_v3
+    # for dataset in mbpp_plus human_eval_plus livecodebench_lite_v3
+    for dataset in livecodebench_lite_v3
     do
         if [[ "$dataset" == "mbpp_plus" || "$dataset" == "human_eval_plus" ]]; then
             testbank="codegenning/B_${dataset}_v2"
@@ -14,17 +13,18 @@ do
         SEARCH_ALG="basic_prompting" \
             python eval.py \
             --model-config-path model_configs/${model}.json \
-            --output final_results/base_v_instruct/${dataset}/basic_prompting225_${model}_temp0.9 \
-            --experiment-directory other_logs/final_logs/base_v_instruct/${dataset}/basic_prompting225_${model}_temp0.9 \
+            --output final_results/base_v_instruct/${dataset}/basic_prompting10000_${model}_temp0.9 \
+            --experiment-directory other_logs/final_logs/base_v_instruct/${dataset}/basic_prompting10000_${model}_temp0.9 \
             --dataset codegenning/F_${dataset} \
-            --completion-limit 225 \
+            --completion-limit 10000 \
             --temperature 0.9 \
             --top-p 0.95 \
             --split test \
             --testbank $testbank \
-            --cache-file caches/${model}_${dataset}_cache.json \
-            --exec-type both \
-            --exec-batch-size 325 \
+            --cache-file caches/${model}_${dataset}_big_cache.json \
+            --exec-type none \
+            --exec-batch-size 48000 \
+            --exec-num-processes 180 \
             --global-batch-size 65536
 
 

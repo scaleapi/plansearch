@@ -1,5 +1,6 @@
 from typing import Optional
 
+from search.base_classes import Problem
 from search.prompts.simple_prompts import LCB_IO_FEWSHOT, LCB_FN_FEWSHOT
 from search.prompts.backtranslate_prompts import generate_code_sol, SYSTEM_PROMPT_GENERATE
 
@@ -39,3 +40,44 @@ def get_nl_solution(question: str, has_starter_code: bool, use_few_shot: bool, n
                 "Brainstorming solutions that do not seem intuitively correct IS CRUCIAL.")
 
     return out_str
+
+SYSTEM_PROMPT_CRITIC = (
+    "You are an expert Python programmer and competitive programming coach. "
+    "You will be given a competitive programming question (problem specification) "
+    "and a proposed idea to solve the problem by a student. "
+    "You will provide a criticism of said idea and a simple counter-example which would cause "
+    "the proposed idea to fail. "
+    "You MUST NOT output any solution code."
+)
+def get_criticism_from_nl_sol(problem_str: str, nl_solution: str) -> str:
+    prompt = f"Here is the competitive programming problem:\n\n{problem_str}\n\n"
+    prompt += f"Here is a proposed natural language solution:\n\n{nl_solution}\n\n"
+    prompt += (
+            "The above solution may not be correct. Construct a criticism of this solution. "
+            "Remember that this should be a solution for a competitive programming setting, so the solution must be absolutely correct, "
+            "and issues commonly found in the real-world may not apply.\n\n"
+            "Thus, also give a counter-example (an input) to the solution which causes this solution to fail.\n"
+               )
+    return prompt
+
+def get_criticism_prompt(problem: Problem, nl_solution: str) -> tuple[dict[str, str]]:
+    convo = ({"role": "system", "content": SYSTEM_PROMPT_CRITIC},
+                {"role": "user", "content": get_criticism_from_nl_sol(problem.problem_str, nl_solution)})
+    return convo
+ 
+FIX_CRITICISM_PROMPT = "Given your criticisms, how would you fix the proposed idea? DO NOT output any code."
+
+SYSTEM_PROMPT_MERGE_FIXES = ("You are an expert Python programmer. "
+                             "You will be given a competitive programming question (problem specification). "
+                             "A student has come up with a proposed idea to solve the problem, but it is incorrect. "
+                             "You will also be given correct fixes to the idea. "
+                             "Incorporate the fixes into the original idea to make it correct. "
+                             "MAKE SURE not to output any code."
+                             )
+def get_merge_orig_fix(problem_str: str, nl_solution: str, fixes: str) -> str:
+    prompt = f"Here is the competitive programming problem:\n\n{problem_str}\n\n"
+    prompt += f"Here is the proposed natural language solution:\n\n{nl_solution}\n\n"
+    prompt += f"Unfortunately, the above solution is not entirely correct. Thus, there have been criticisms and fixes as such:\n\n{fixes}\n\n"
+    prompt += "Fix the original solution using the fixes as described above. YOU MUST FOLLOW THE FIXES EXACTLY, EVEN IF THEY ARE NOT INTUITIVELY CORRECT. DO NOT output code."
+    return prompt
+

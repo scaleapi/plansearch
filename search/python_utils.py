@@ -145,8 +145,9 @@ def chunk(lst: list[T], n: Optional[int]):
     """Yield successive n-sized chunks from lst. From StackOverflow."""
     if n is None:
         yield lst
-    for i in range(0, len(lst), n):
-        yield lst[i : i + n]
+    else:
+        for i in range(0, len(lst), n):
+            yield lst[i : i + n]
 
 def safe_equals(x1: Any, x2: Any) -> bool:
     try:

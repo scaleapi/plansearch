@@ -3,7 +3,7 @@ import os
 
 from search.fn import Function, get_all_descendant_impls
 from search.base_classes import Test
-from coderm.execution import smart_exec_tests_queuebatched
+from coderm.execution import smart_exec_tests_queuebatched, smart_exec_tests_queuebatched_with_mp
 
 
 def get_passed_tests_and_errors(
@@ -22,7 +22,7 @@ def get_passed_tests_and_errors(
     return passed_tests, str_errors
 
 
-def run_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], str]], timeouts: list[int], fn_names_pc: Optional[list[Optional[str]]] = None, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> list[tuple[bool, str]]:
+def run_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], str]], timeouts: list[int], fn_names_pc: Optional[list[Optional[str]]] = None, num_workers: Optional[int] = os.cpu_count(), total_num_concurrent: int = 1000, testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000", return_none: bool = False) -> list[tuple[bool, str]]:
     assert len(impls) == len(tests_per_code) == len(timeouts)
 
     test_infos = []
@@ -62,7 +62,7 @@ def run_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], 
             test_infos.append(tests)
             has_Solutions_pc.append(None)
 
-    return smart_exec_tests_queuebatched(impls, test_infos, timeouts=timeouts, has_Solution_per_code=has_Solutions_pc, workers=num_workers, executor=executor, testbank=testbank)
+    return smart_exec_tests_queuebatched_with_mp(impls, test_infos, executor=executor, timeouts=timeouts, has_Solution_per_code=has_Solutions_pc, num_workers=num_workers, total_num_concurrent=total_num_concurrent, use_tqdm=True, testbank=testbank, return_none=return_none)
 
 
 def run_tests(impl: str, tests: Union[list[Test], str], timeout: int, num_workers: Optional[int] = os.cpu_count(), testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000") -> tuple[bool, str]:

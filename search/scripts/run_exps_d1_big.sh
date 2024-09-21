@@ -24,8 +24,9 @@ do
             --split test \
             --testbank $testbank \
             --cache-file caches/${model}_${dataset}_big_cache.json \
-            --exec-public \
-            --exec-batch-size 325 \
+            --exec-type none \
+            --exec-batch-size 9000 \
+            --exec-num-processes 180 \
             --global-batch-size 65536
             
 

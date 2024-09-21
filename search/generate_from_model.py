@@ -11,7 +11,7 @@ from search.dataset_utils import parse_dataset
 from search.python_utils import batch_map_on_nested_list
 
 
-def do_full_run(model: SearchModel, dataset_name: str, split: str, num_completions: int, completions_from_model: bool, output_path: str, exec_public: bool = False, testbank: Optional[str] = None, num_workers: Optional[int] = os.cpu_count(), executor: str = "http://127.0.0.1:8000", timeout: int = 60) -> tuple[list[list[str]], list[list[CompletionResult]]]:
+def do_full_run(model: SearchModel, dataset_name: str, split: str, num_completions: int, completions_from_model: bool, output_path: str, exec_type: str, testbank: Optional[str] = None, num_workers: Optional[int] = os.cpu_count(), total_num_concurrent: int = 1000, executor: str = "http://127.0.0.1:8000", timeout: int = 60) -> tuple[list[list[str]], list[list[CompletionResult]]]:
     assert not (not completions_from_model and num_completions == -1)
     assert num_completions != 0
 
@@ -33,13 +33,15 @@ def do_full_run(model: SearchModel, dataset_name: str, split: str, num_completio
     if completions_from_model:
         assert model.COMPLETION_FROM_MODEL_SUPPORTED
         expanded_problems = problems
+        given_n_completions = num_completions
     else:
         expanded_problems = problems * num_completions
+        given_n_completions = 1
 
     num_empty_tests = sum([(len(problem.private_tests) == 0) and (problem.private_exec_string is None) for problem in problems])
     num_empty_public_tests = sum([(len(problem.public_tests) == 0) and (problem.public_exec_string is None) for problem in problems])
 
-    codes = model.generate_solutions(expanded_problems, completions_from_model=completions_from_model, num_completions=num_completions)
+    codes = model.generate_solutions(expanded_problems, num_completions=given_n_completions)
 
     if not completions_from_model:
         assert len(codes) == len(problems) * num_completions
@@ -69,25 +71,28 @@ def do_full_run(model: SearchModel, dataset_name: str, split: str, num_completio
     if not completions_from_model or num_completions != -1:
         assert num_total_to_eval == len(problems) * num_completions
 
-    if num_empty_tests > 0:
+    if num_empty_tests > 0 and exec_type != "none":
         print(f"Warning: {num_empty_tests} problems with no private tests." )
-    if num_empty_public_tests > 0 and exec_public:
+    if num_empty_public_tests > 0 and exec_type == "both":
         print(f"Warning: {num_empty_public_tests} problems with no public tests." )
 
-    results = run_tests_per_code(flattened_codes, flattened_private_tests, [timeout] * num_total_to_eval, fn_names_pc=flattened_fn_names, testbank=testbank, num_workers=num_workers, executor=executor)
-    assert len(results) == num_total_to_eval
-
+    private_results = [(None, None)] * num_total_to_eval
     public_results = [(None, None)] * num_total_to_eval 
-    if exec_public:
-        public_results = run_tests_per_code(flattened_codes, flattened_public_tests, [timeout] * num_total_to_eval, fn_names_pc=flattened_fn_names, testbank=testbank, num_workers=num_workers, executor=executor)
+
+    if exec_type != "none":
+        private_results = run_tests_per_code(flattened_codes, flattened_private_tests, [timeout] * num_total_to_eval, fn_names_pc=flattened_fn_names, testbank=testbank, num_workers=num_workers, total_num_concurrent=total_num_concurrent, executor=executor)
+        assert len(private_results) == num_total_to_eval
+    if exec_type == "both":
+        public_results = run_tests_per_code(flattened_codes, flattened_public_tests, [timeout] * num_total_to_eval, fn_names_pc=flattened_fn_names, testbank=testbank, num_workers=num_workers, total_num_concurrent=total_num_concurrent, executor=executor)
         assert len(public_results) == num_total_to_eval
 
     all_results = [[] for _ in range(len(problems))]
-    for orig_idx, code, result, public_result in zip(orig_problem_idxs, flattened_codes, results, public_results):
+    for orig_idx, code, private_result, public_result in zip(orig_problem_idxs, flattened_codes, private_results, public_results):
         completion_items[orig_idx].completions.append(Completion(code, -1, -1))
 
-        all_results[orig_idx].append(CompletionResult(result[0], result[1], public_result[0], public_result[1]))
-        completion_items[orig_idx].results.append(all_results[orig_idx][-1])
+        all_results[orig_idx].append(CompletionResult(private_result[0], private_result[1], public_result[0], public_result[1]))
+        if exec_type != "none":
+            completion_items[orig_idx].results.append(all_results[orig_idx][-1])
         
 
     save_completions(completion_items, output_path, model=model.model_name, completion_limit=num_completions, dataset_name=dataset_name)
