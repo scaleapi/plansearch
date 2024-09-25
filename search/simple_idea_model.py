@@ -62,19 +62,7 @@ class SimpleIdeaModel(SearchModel):
                               )
         assert len(outputs) == len(prompts)
         return outputs
-
-    def get_nl_sols_prompt(self, problem: Problem) -> tuple[dict[str, str]]:
-        convo = []
-        if self.use_sys_prompt:
-            convo.append({"role": "system", "content": self.prompts.SYSTEM_PROMPT_TRANSLATE})
-        convo.append({"role": "user", "content": self.prompts.get_nl_solution(problem.problem_str, problem.has_starter_code(), use_few_shot=self.use_few_shot, num_words=self.num_words)})
-        return tuple(convo)
-    
-    def nl_to_code_solution_prompt(self, problem: Problem, nl_solution: str) -> tuple[dict[str, str]]:
-        convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_GENERATE},
-                 {"role": "user", "content": self.prompts.generate_code_sol(problem.problem_str, nl_solution, problem.starter_code)}]
-        return tuple(convo)
-    
+   
     def select_code(self, problem: Problem, codes: list[str]) -> str:
         assert len(codes) == self.num_codes_per_idea
         if len(codes) == 1:
@@ -86,10 +74,11 @@ class SimpleIdeaModel(SearchModel):
         num_completions = kwargs.get("num_completions", 1)
         assert num_completions > 0
         if self.add_criticism:
-            assert num_completions % 2 == 0
-            num_completions = num_completions // 2
+            assert num_completions == 2
+        else:
+            assert num_completions == 1
 
-        get_nl_sols_prompt = [[self.get_nl_sols_prompt(problem)] * num_completions for problem in problems]
+        get_nl_sols_prompt = [[self.prompts.get_nl_sols_prompt(problem, use_few_shot=self.use_few_shot, use_sys_prompt=self.use_sys_prompt, num_words=self.num_words)] * num_completions for problem in problems]
         nl_solutions: list[list[str]] = batch_map_on_nested_list(get_nl_sols_prompt, lambda li: self.query_model("idea", li))
         
         log_dict = [
@@ -118,7 +107,7 @@ class SimpleIdeaModel(SearchModel):
 
             nl_solutions = [orig_sols + fixes_for_problem for orig_sols, fixes_for_problem in zip(nl_solutions, fixes)]
 
-        nl_to_acc_sol_prompts = [[self.nl_to_code_solution_prompt(problem, nl_solution) for nl_solution in nl_solutions_for_problem]
+        nl_to_acc_sol_prompts = [[self.prompts.nl_to_code_solution_prompt(problem, nl_solution) for nl_solution in nl_solutions_for_problem]
                                  for problem, nl_solutions_for_problem in zip(problems, nl_solutions)]
         generated: list[list[str]] = batch_map_on_nested_list(nl_to_acc_sol_prompts, lambda li: self.query_model("code", li))
         assert len(generated) == len(problems) * self.num_codes_per_idea
@@ -133,12 +122,12 @@ class SimpleIdeaModel(SearchModel):
         
         for i in range(len(problems)):
             if self.add_criticism:
-                assert len(extracted_codes[i]) == num_completions * 2
+                assert len(extracted_codes[i]) == 2
                 for j in range(num_completions):
                     log_dict[i][j]["first_code"] = extracted_codes[i][j] 
                     log_dict[i][j]["fix_code"] = extracted_codes[i][j+num_completions]
             else:
-                assert len(extracted_codes[i]) == num_completions
+                assert len(extracted_codes[i]) == 1
                 for j in range(num_completions):
                     log_dict[i][j]["first_code"] = extracted_codes[i][j]
 

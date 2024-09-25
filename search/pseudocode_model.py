@@ -31,16 +31,6 @@ class PseudocodeModel(SearchModel):
                  {"role": "user", "content": self.prompts.get_nl_solution(problem.problem_str, problem.has_starter_code(), self.use_few_shot)}]
         return convo
 
-    def get_pseudocode_prompt(self, problem: Problem, nl_solution: str) -> list[dict[str, str]]:
-        convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_PSEUDOCODE},
-                 {"role": "user", "content": self.prompts.get_pseudocode(problem.problem_str, nl_solution)}]
-        return convo
-
-    def pseudocode_to_solution_prompt(self, problem: Problem, pseudocode: str) -> list[dict[str, str]]:
-        convo = [{"role": "system", "content": self.prompts.SYSTEM_PROMPT_GENERATE},
-                 {"role": "user", "content": self.prompts.generate_code_sol(problem.problem_str, pseudocode, problem.starter_code)}]
-        return convo
-
     def generate_solutions(self, problems: list[Problem], *args, **kwargs) -> list[list[str]]:
         get_nl_sols_prompt = [self.get_nl_sols_prompt(problem) for problem in problems]
         nl_solutions = self.querier.generate(self.idea_model, 
@@ -56,7 +46,7 @@ class PseudocodeModel(SearchModel):
                               requery=True,
                               )
         
-        get_pseudocode_prompt = [self.get_pseudocode_prompt(problem, nl_solution) for problem, nl_solution in zip(problems, nl_solutions)]
+        get_pseudocode_prompt = [self.prompts.get_pseudocode_prompt(problem.problem_str, nl_solution) for problem, nl_solution in zip(problems, nl_solutions)]
         pseudocodes = self.querier.generate(self.code_model, 
                               get_pseudocode_prompt,
                               frequency_penalty=self.frequency_penalty,
@@ -70,7 +60,7 @@ class PseudocodeModel(SearchModel):
                               requery=True,
                               )
 
-        pseudocode_to_sol_prompts = [self.pseudocode_to_solution_prompt(problem, pseudocode) for problem, pseudocode in zip(problems, pseudocodes)]
+        pseudocode_to_sol_prompts = [self.prompts.pseudocode_to_code_solution_prompt(problem.problem_str, problem.starter_code, pseudocode) for problem, pseudocode in zip(problems, pseudocodes)]
         generated = self.querier.generate(self.code_model, 
                               pseudocode_to_sol_prompts,
                               frequency_penalty=self.frequency_penalty,

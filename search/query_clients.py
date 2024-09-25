@@ -315,7 +315,8 @@ class OpenAIClient(LLMClient):
             
         assert o is not None, "OpenAI returned a null response"
         num_tokens = response.usage.completion_tokens
-        print("NUM TOKENS:", num_tokens)
+        if self.model_is_o1:
+            print("NUM TOKENS:", num_tokens)
         if choice.finish_reason == "length":
             print("Warning, output clipped.")
 

@@ -53,3 +53,14 @@ def generate_code_sol(question: str, pseudocode: str, starter_code: str = "") ->
         out_str += "\n\nYour solution should also utilize the following starter code:\n\n```python\n" + starter_code + "\n```"
 
     return out_str
+
+def get_pseudocode_prompt(problem_str: str, nl_solution: str) -> list[dict[str, str]]:
+    convo = [{"role": "system", "content": SYSTEM_PROMPT_PSEUDOCODE},
+                {"role": "user", "content": get_pseudocode(problem_str, nl_solution)}]
+    return convo
+
+def pseudocode_to_code_solution_prompt(problem_str: str, starter_code: str, pseudocode: str) -> list[dict[str, str]]:
+    convo = [{"role": "system", "content": SYSTEM_PROMPT_GENERATE},
+                {"role": "user", "content": generate_code_sol(problem_str, pseudocode, starter_code)}]
+    return convo
+

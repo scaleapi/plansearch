@@ -41,6 +41,19 @@ def get_nl_solution(question: str, has_starter_code: bool, use_few_shot: bool, n
 
     return out_str
 
+def get_nl_sols_prompt(problem: Problem, use_few_shot: bool = True, use_sys_prompt: bool = True, num_words: Optional[int] = None) -> tuple[dict[str, str]]:
+    convo = []
+    if use_sys_prompt:
+        convo.append({"role": "system", "content": SYSTEM_PROMPT_TRANSLATE})
+    convo.append({"role": "user", "content": get_nl_solution(problem.problem_str, problem.has_starter_code(), use_few_shot=use_few_shot, num_words=num_words)})
+    return tuple(convo)
+
+def nl_to_code_solution_prompt(problem: Problem, nl_solution: str) -> tuple[dict[str, str]]:
+    convo = [{"role": "system", "content": SYSTEM_PROMPT_GENERATE},
+                {"role": "user", "content": generate_code_sol(problem.problem_str, nl_solution, problem.starter_code)}]
+    return tuple(convo)
+
+
 SYSTEM_PROMPT_CRITIC = (
     "You are an expert Python programmer and competitive programming coach. "
     "You will be given a competitive programming question (problem specification) "

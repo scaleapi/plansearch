@@ -128,15 +128,16 @@ def add_universal_args(parser: argparse.ArgumentParser):
             help="Where to output results of eval"
             )
     parser.add_argument(
-        "--completion-limit",
+        "--num-repeats", "--completion-limit",
         type=int,
         default=1,
-        help="Number of completions to generate per problem"
+        help="How many times to repeat a problem (i.e., how many times to run the model independently)"
     )
     parser.add_argument(
-        "--completions-from-model",
-        action="store_true",
-        help="Whether to input more problems for n-completions or let model generate n-completions itself"
+        "--num-completions-from-model",
+        type=int,
+        default=1,
+        help="Number of completions to generate for a given problem in the model (-1 to let model decide)"
     )
     parser.add_argument(
         "--global-batch-size",
@@ -185,7 +186,7 @@ def generate_and_eval(search_alg: str):
 
     codes_results_dict = {}
     for split in splits:
-        codes, results = do_full_run(model, args.dataset, split, args.completion_limit, args.completions_from_model, experiment_dir_output + "_" + split, exec_type=args.exec_type, testbank=args.testbank, num_workers=args.exec_num_processes, total_num_concurrent=args.exec_batch_size, executor=args.executor, timeout=args.timeout)
+        codes, results = do_full_run(model, args.dataset, split, args.num_repeats, args.num_completions_from_model, experiment_dir_output + "_" + split, exec_type=args.exec_type, testbank=args.testbank, num_workers=args.exec_num_processes, total_num_concurrent=args.exec_batch_size, executor=args.executor, timeout=args.timeout)
         codes_results_dict[split] = (codes, results)
 
     if output_result_path is not None:

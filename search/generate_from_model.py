@@ -11,9 +11,9 @@ from search.dataset_utils import parse_dataset
 from search.python_utils import batch_map_on_nested_list
 
 
-def do_full_run(model: SearchModel, dataset_name: str, split: str, num_completions: int, completions_from_model: bool, output_path: str, exec_type: str, testbank: Optional[str] = None, num_workers: Optional[int] = os.cpu_count(), total_num_concurrent: int = 1000, executor: str = "http://127.0.0.1:8000", timeout: int = 60) -> tuple[list[list[str]], list[list[CompletionResult]]]:
-    assert not (not completions_from_model and num_completions == -1)
-    assert num_completions != 0
+def do_full_run(model: SearchModel, dataset_name: str, split: str, num_repeats: int, num_completions_from_model: int, output_path: str, exec_type: str, testbank: Optional[str] = None, num_workers: Optional[int] = os.cpu_count(), total_num_concurrent: int = 1000, executor: str = "http://127.0.0.1:8000", timeout: int = 60) -> tuple[list[list[str]], list[list[CompletionResult]]]:
+    assert num_completions_from_model != 0
+    assert num_repeats >= 1
 
     problems = parse_dataset(dataset_name, split)
 
@@ -30,30 +30,24 @@ def do_full_run(model: SearchModel, dataset_name: str, split: str, num_completio
 
     completion_items = make_items_from_ds(ds, "question", "input_output", public_tests_col=optional_features["public_tests_col"], starter_code_col="starter_code", difficulty_col=optional_features["difficulty_col"], unique_name_col=optional_features["unique_name_col"], solutions_col=optional_features["solutions_col"])
     
-    if completions_from_model:
+
+    if num_completions_from_model != 1:
         assert model.COMPLETION_FROM_MODEL_SUPPORTED
-        expanded_problems = problems
-        given_n_completions = num_completions
-    else:
-        expanded_problems = problems * num_completions
-        given_n_completions = 1
+    expanded_problems = problems * num_repeats
 
     num_empty_tests = sum([(len(problem.private_tests) == 0) and (problem.private_exec_string is None) for problem in problems])
     num_empty_public_tests = sum([(len(problem.public_tests) == 0) and (problem.public_exec_string is None) for problem in problems])
 
-    codes = model.generate_solutions(expanded_problems, num_completions=given_n_completions)
+    unsorted_codes = model.generate_solutions(expanded_problems, num_completions=num_completions_from_model)
 
-    if not completions_from_model:
-        assert len(codes) == len(problems) * num_completions
-        assert all(len(code) == 1 for code in codes)
-        codes = [
-                    [codes[i + len(problems) * j][0] for j in range(num_completions)]
-                  for i in range(len(problems))
-                ]
-
+    assert len(unsorted_codes) == len(problems) * num_repeats
+    if num_completions_from_model != -1:
+        assert all(len(code) == num_completions_from_model for code in unsorted_codes)
+    
+    codes = [[] for _ in range(len(problems))]
+    for i, output_code in enumerate(unsorted_codes):
+        codes[i % len(problems)].extend(output_code)
     assert len(codes) == len(problems)
-    if num_completions != -1:
-        assert all(len(codes_for_problem) == num_completions for codes_for_problem in codes)
 
     flattened_codes = []
     flattened_fn_names = []
@@ -68,8 +62,8 @@ def do_full_run(model: SearchModel, dataset_name: str, split: str, num_completio
         orig_problem_idxs.extend([i] * len(codes_for_problem))
 
     num_total_to_eval = len(flattened_codes)
-    if not completions_from_model or num_completions != -1:
-        assert num_total_to_eval == len(problems) * num_completions
+    if num_completions_from_model != -1:
+        assert num_total_to_eval == len(problems) * num_completions_from_model * num_repeats
 
     if num_empty_tests > 0 and exec_type != "none":
         print(f"Warning: {num_empty_tests} problems with no private tests." )
@@ -95,7 +89,7 @@ def do_full_run(model: SearchModel, dataset_name: str, split: str, num_completio
             completion_items[orig_idx].results.append(all_results[orig_idx][-1])
         
 
-    save_completions(completion_items, output_path, model=model.model_name, completion_limit=num_completions, dataset_name=dataset_name)
+    save_completions(completion_items, output_path, model=model.model_name, completion_limit=num_total_to_eval, dataset_name=dataset_name)
 
     return codes, all_results 
 
