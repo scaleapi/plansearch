@@ -210,7 +210,7 @@ def generate_and_eval(search_alg: str):
 
 
 if __name__ == "__main__":
-    assert os.environ["EXECUTOR_URL"] == '***REMOVED***', "Check your EXECUTOR_URL"
+    assert os.environ["EXECUTOR_URL"].endswith("agk8g"), "Check your EXECUTOR_URL"
     search_alg = os.environ.get("SEARCH_ALG", None)
     if search_alg is None:
         raise ValueError("SEARCH_ALG environment variable unset")
