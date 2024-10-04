@@ -14,7 +14,7 @@ This repository contains the code and scripts used to reproduce the experiments 
 Clone the repository and install the necessary dependencies. This git repo also uses submodules. 
 
 ```bash
-git clone https://github.com/evanzwang/plansearch.git
+git clone https://github.com/evanzwang/plansearch.git --recurse-submodules
 cd plansearch
 pip install -e .
 pip install -e CodeRM
