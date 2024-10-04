@@ -7,18 +7,7 @@ PlanSearch is a novel search algorithm designed to boost large language models' 
 This repository contains the code and scripts used to reproduce the experiments in PlanSearch, including both the actual runs themselves as well as diversity measurement scores.
 
 
-
-<!-- ### Key Features of PLANSEARCH: -->
-<!-- - **Diverse Search Strategy**: Instead of directly searching over code solutions, PLANSEARCH generates diverse natural language observations about the problem and searches over plans constructed from these observations. -->
-<!-- - **Improved Performance**: Achieves a pass@200 of 77.0% on LiveCodeBench, significantly outperforming standard repeated sampling strategies. -->
-<!-- - **Scalable to Multiple Models**: Works with various LLMs and search algorithms, with the ability to predict performance gains based on the diversity of generated ideas. -->
-<!---->
-
 ## Setup
-
-### Prerequisites
-
-before getting started
 
 ### Installation
 
@@ -27,10 +16,9 @@ Clone the repository and install the necessary dependencies. This git repo also 
 ```bash
 git clone https://github.com/evanzwang/plansearch.git
 cd plansearch
-pip install -r requirements.txt
+pip install -e .
+pip install -e CodeRM
 ```
-
-do the thing with submodules
 
 ## Usage
 
@@ -43,6 +31,17 @@ The datasets can be found at `https://huggingface.co/codegenning`.
 
 #### Dataset Formats
 
+F_ format mandatory columns:
+- `question`: String representing the question
+- `starter_code`: A string representing the starter code to the problem, such as LeetCode's `Solution: ...`. If no starter code required, is the empty string.
+- `input_output`: A JSON string containing a dictionary with keys `inputs`, `outputs`, and optionally `fn_name` or `exec_string`.
+    - `inputs`: A list of inputs, one for each test case. Same length as `outputs`.
+    - `outputs`: A list of outputs, one for each test case.
+    - `fn_name`: If provided, is a string citing the entrypoint (i.e., function name) the test will run. Otherwise, the both input and output are strings and accepted through standard in/out.
+    - `exec_string`: If provided, will simply run `exec_string` instead of the default test harness. Every other key will be ignored.
+
+F_ format optional columns:
+- `public_input_output`: String the same as `input_output` format, but describing the public tests instead
 
 ### Running PlanSearch and Baselines
 
@@ -51,22 +50,6 @@ To run experiments, you can use the provided `eval.py`. It takes in an environme
 - `simple_idea` - IdeaSearch
 - `combo_observation` - PlanSearch
 - `backtranslate` - Backtranslation experiments
-
-
-<!-- SEARCH_ALGS_TO_GET_ARGS_MODEL = { -->
-<!--     "basic_prompting": (add_basic_prompting_args, get_basic_prompting_model), -->
-<!--     "story": (add_story_args, get_story_model), -->
-<!--     "random_word": (add_random_word_args, get_random_word_model), -->
-<!--     "backtranslate": (add_backtranslate_args, get_backtranslate_model), -->
-<!--     "simple_filter": (add_simple_prompt_filter_args, get_simple_prompt_filter_model), -->
-<!--     "simple_idea": (add_simple_idea_args, get_simple_idea_model), -->
-<!--     "idea_filter": (add_idea_filter_args, get_idea_filter_model), -->
-<!--     "simple_observation": (add_simple_observation_args, get_simple_observation_model), -->
-<!--     "pseudocode": (add_pseudocode_args, get_pseudocode_model), -->
-<!--     "parsel": (add_parsel_args, get_parsel_model), -->
-<!--     "combo_observation": (add_combo_observation_args, get_combo_observation_model), -->
-<!-- } -->
-
 
 No matter the search algorithm, `eval.py` takes in several arguments:
 - `experiment-directory`: Optional string. Specifies where to save experiment and query logs. If None, will save to a default logs directory.
@@ -89,7 +72,7 @@ In addition, there are arguments for the code execution:
 
 
 #### Example PlanSearch run
-```sh
+```bash
 SEARCH_ALG="combo_observation" \
 python eval.py \
 --idea-model-config-path model_configs/gpt-4o.json \
@@ -118,6 +101,8 @@ See [specific arguments](#specific-search-algorithm-arguments) for the specific 
 Results are saved as `.json.gz` files, and if tests were executed, pass@k can be computed using CodeRM's pass@k script in `coderm/coderm/eval/metrics.py`. 
 
 Plotting utilities can be found in `notebooks/graph_notebooks`, with final versions of the graphs found in the paper produced by `notebooks/graph_notebooks/final_2_pass_k.ipynb`.
+
+Parse dataset name into list of Problems (parse_dataset_utils.parse_dataset)
 
 ### Diversity
 
