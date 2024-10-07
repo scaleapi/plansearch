@@ -1,0 +1,3 @@
+[submodule "CodeRM"]
+	path = CodeRM
+	url = git@github.com:cassanof/CodeRM.git
