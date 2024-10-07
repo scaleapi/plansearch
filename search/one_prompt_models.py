@@ -190,6 +190,8 @@ def add_random_word_args(parser: argparse.ArgumentParser):
     )
 
 def get_basic_prompting_model(args: argparse.Namespace) -> SearchModel:
+    if args.max_tokens == -1:
+        args.max_tokens = None
     model_path = parse_args_for_model_client(args, model_config_name="model", temp_folder_base=args.experiment_directory)
     return BasicPromptModel(model_config_path=model_path, experiment_directory=args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, use_cot=args.cot, use_sys_prompts=not args.no_sys_prompt, num_shot=args.num_shots, temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens, use_mbpp=args.use_mbpp)
 

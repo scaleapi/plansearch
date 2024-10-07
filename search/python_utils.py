@@ -110,6 +110,12 @@ def batch_map_on_nested_list(li: LiRNestListT, fn: Callable[[list[T]], list[U]])
     return formatted_outputs
 
 
+def remove_from_str(s: str, filter_strs: list[str]) -> str:
+    new_s = s
+    for filt in filter_strs:
+        new_s = new_s.replace(filt, "")
+    return new_s
+
 def stringify(x: Any) -> str:
     try:
         return json.dumps(x)

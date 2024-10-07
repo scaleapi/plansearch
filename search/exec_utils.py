@@ -22,6 +22,41 @@ def get_passed_tests_and_errors(
     return passed_tests, str_errors
 
 
+def run_individual_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], str]], timeouts: list[int], fn_names_pc: Optional[list[Optional[str]]] = None, num_workers: Optional[int] = os.cpu_count(), total_num_concurrent: int = 1000, testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000", return_none: bool = False) -> list[list[tuple[bool, str]]]:
+    assert len(impls) == len(tests_per_code) == len(timeouts)
+    
+    extended_impls = []
+    extended_tests_pc = []
+    extended_timeouts = []
+    extended_fn_names_pc = [] if fn_names_pc is not None else None
+
+    map_to_orig = []
+
+    for i in range(len(tests_per_code)):
+        if isinstance(tests_per_code[i], str):
+            print("Warning: run-individual-tests cannot separate string test.")
+            test_len = 1
+            extended_tests_pc.append(tests_per_code[i])
+        else:
+            assert isinstance(tests_per_code[i], list)
+            test_len = len(tests_per_code[i])
+            extended_tests_pc.extend([[test] for test in tests_per_code[i]])
+        
+        extended_impls.extend([impls[i]] * test_len)
+        extended_timeouts.extend([timeouts[i]] * test_len)
+        if fn_names_pc is not None:
+            extended_fn_names_pc.extend([fn_names_pc[i]] * test_len)
+        map_to_orig.extend([i] * test_len)
+    
+    results = run_tests_per_code(extended_impls, extended_tests_pc, extended_timeouts, extended_fn_names_pc, num_workers=num_workers, total_num_concurrent=total_num_concurrent, testbank=testbank, executor=executor, return_none=return_none)
+    
+    grouped_results = [[] for _ in range(len(impls))]
+
+    for orig_idx, res in zip(map_to_orig, results):
+        grouped_results[orig_idx].append(res)
+    return grouped_results
+
+
 def run_tests_per_code(impls: list[str], tests_per_code: list[Union[list[Test], str]], timeouts: list[int], fn_names_pc: Optional[list[Optional[str]]] = None, num_workers: Optional[int] = os.cpu_count(), total_num_concurrent: int = 1000, testbank: Optional[str] = None, executor: str = "http://127.0.0.1:8000", return_none: bool = False) -> list[tuple[bool, str]]:
     assert len(impls) == len(tests_per_code) == len(timeouts)
 

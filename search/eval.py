@@ -81,6 +81,11 @@ def add_executor_args(parser: argparse.ArgumentParser):
         default=60,
         help="Timeout for each test"
     )
+    parser.add_argument(
+        "--run-individual-tests",
+        action="store_true",
+        help="If specified, runs each test individually, and tries to use subtasks column in Dataset"
+    )
 
 
 def add_universal_args(parser: argparse.ArgumentParser):
@@ -186,7 +191,7 @@ def generate_and_eval(search_alg: str):
 
     codes_results_dict = {}
     for split in splits:
-        codes, results = do_full_run(model, args.dataset, split, args.num_repeats, args.num_completions_from_model, experiment_dir_output + "_" + split, exec_type=args.exec_type, testbank=args.testbank, num_workers=args.exec_num_processes, total_num_concurrent=args.exec_batch_size, executor=args.executor, timeout=args.timeout)
+        codes, results = do_full_run(model, args.dataset, split, args.num_repeats, args.num_completions_from_model, experiment_dir_output + "_" + split, exec_type=args.exec_type, testbank=args.testbank, num_workers=args.exec_num_processes, total_num_concurrent=args.exec_batch_size, executor=args.executor, timeout=args.timeout, run_individual_tests=args.run_individual_tests)
         codes_results_dict[split] = (codes, results)
 
     if output_result_path is not None:

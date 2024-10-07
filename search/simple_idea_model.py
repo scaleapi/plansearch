@@ -191,6 +191,8 @@ def add_simple_idea_args(parser: argparse.ArgumentParser):
     )
 
 def get_simple_idea_model(args: argparse.Namespace) -> SearchModel:
+    if args.max_tokens == -1:
+        args.max_tokens = None
     idea_model_path = parse_args_for_model_client(args, model_config_name="idea_model", temp_folder_base=args.experiment_directory)
     code_model_path = parse_args_for_model_client(args, model_config_name="code_model", temp_folder_base=args.experiment_directory)
     return SimpleIdeaModel(idea_model_path, code_model_path, args.experiment_directory, cache_file=args.cache_file, querier_batch_size=args.global_batch_size, idea_temperature=args.idea_temperature, code_temperature=args.code_temperature, top_p=args.top_p, max_tokens=args.max_tokens, use_few_shot=not args.zero_shot, use_sys_prompt=not args.no_sys_prompt, num_words=args.num_words, num_codes_per_idea=args.num_codes_per_idea, add_criticism=args.add_criticism)

@@ -17,11 +17,12 @@ import time
 from httpcore import ReadError
 import random
 import warnings
+from uuid import uuid4
 
 from coderm.prompts import Prompt
 from coderm.model import Completion, logprobs_to_cumulative
 from search.query_clients import LLMClient, OpenAIClient
-from search.python_utils import autodetect_dtype_str, chunk
+from search.python_utils import autodetect_dtype_str, chunk, remove_from_str
 
 
 MODELS_TO_METHOD = {
@@ -43,6 +44,8 @@ MODELS_TO_METHOD = {
 SUPPORTED_CLIENT_FOR_ASSISTANT_STR = ["vllm", "llama_cpp_hf"]
 
 PRINT_EVERY_X_DOLLARS = 1e3
+DEFAULT_O1_REPLACEMENT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "model_configs/gpt-4o.json")
+O1_FILTER = ["steps", "STEPS", "Steps", "step", "STEP", "Step", "Quote"]
 
 class CompletionCache:
     def __init__(self, cache_file: Optional[str]) -> None:
@@ -109,6 +112,9 @@ class CompletionCache:
 
         self.current_cache[query_idx_str] = {"text": completion.code, "cum_logprob": completion.cumulative_logprob, "num_tokens": completion.num_tokens}
         return True
+    
+    def delete(self, query_idx_str: str) -> Optional[dict]:
+        return self.current_cache.pop(query_idx_str, None)
 
     def _get_cache_query_str(self, model: str, convo: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float]):
         if isinstance(convo, list) or isinstance(convo, tuple):
@@ -146,7 +152,8 @@ class LLMQuerier(ABC):
             return True
         return False
 
-    def generate_with_info(self, client_name: str, prompts: list[Prompt], frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = True, log_name: str = "", timeout: Optional[float] = None) -> list[Completion]:
+    def generate_with_info(self, client_name: str, prompts: list[Prompt], frequency_penalty: Optional[float] = None, logit_bias: Optional[dict[str, int]] = None, max_tokens: Optional[int] = None, presence_penalty: Optional[float] = None, seed: Optional[int] = None, stop: Union[Optional[str], list[str]] = None, temperature: Optional[float] = None, top_p: Optional[float] = None, requery: bool = True, log_name: str = "", timeout: Optional[float] = None, o1_retry: bool = True) -> list[Completion]:
+        curr_hash = str(uuid4())[:6]
         self.add_client(client_name)
         print("generating completions...")
         
@@ -159,6 +166,8 @@ class LLMQuerier(ABC):
         all_completions = []
 
         with tqdm(total=len(prompts)) as pbar:
+            total_failed_prompts = 0
+
             for i, prompt_chunk in enumerate(chunked_prompts):
                 completions, cost = _generate_completions(self.clients[client_name], prompt_chunk,
                     cache=self.cache,
@@ -183,11 +192,54 @@ class LLMQuerier(ABC):
                     print(f"Current spending: ${self.current_price:.2f}")
                     self.next_print_price = (self.current_price // PRINT_EVERY_X_DOLLARS + 1) * PRINT_EVERY_X_DOLLARS
 
-                print(f"done with {i+1}/{len(chunked_prompts)}, saving...")
+
+                if self.clients[client_name].model_is_o1:
+                    failed_prompts = []
+                    orig_idxs = []
+                    for j, completion in enumerate(completions):
+                        if completion.code == self.clients[client_name].BAD_REQUEST_FLAG:
+
+                            # used_prompt = prompt_chunk[j]
+                            # assert isinstance(used_prompt, (list, tuple))
+                            # if used_prompt[0]["role"] == "system":
+                            #     used_prompt = used_prompt[1:]
+
+                            # _, cache_key = self.cache.query(model=self.clients[client_name].model_name, message=used_prompt, frequency_penalty=frequency_penalty, logit_bias=logit_bias, max_tokens=max_tokens, presence_penalty=presence_penalty, seed=seed, stop=stop, temperature=temperature, top_p=top_p)
+                            # assert self.cache.delete(cache_key)["text"] == self.clients[client_name].BAD_REQUEST_FLAG
+
+                            failed_prompts.append(prompt_chunk[j])
+                            orig_idxs.append(j)
+                    
+
+                    if len(failed_prompts):
+                        if o1_retry:
+                            print(f"{len(failed_prompts)} invalid prompt errors... Requerying with filter {O1_FILTER}! {curr_hash}")
+                            filtered_prompts = []
+                            for prompt in failed_prompts:
+                                new_prompt = []
+                                for msg in prompt:
+                                    new_prompt.append({"role": msg["role"], "content": remove_from_str(msg["content"], O1_FILTER)})
+                                filtered_prompts.append(new_prompt)
+                            new_completions = self.generate_with_info(client_name=client_name, prompts=filtered_prompts, frequency_penalty=frequency_penalty, logit_bias=logit_bias, max_tokens=max_tokens, presence_penalty=presence_penalty, seed=seed, stop=stop, temperature=temperature, top_p=top_p, requery=requery, log_name=log_name, timeout=timeout, o1_retry=False)
+                            print(f"Done with filter {curr_hash}")
+                        else:
+                            total_failed_prompts += len(failed_prompts)
+                            print(f"{len(failed_prompts)} invalid prompt errors... Requerying with {DEFAULT_O1_REPLACEMENT}! {curr_hash}")
+                            new_completions = self.generate_with_info(client_name=DEFAULT_O1_REPLACEMENT, prompts=failed_prompts, frequency_penalty=frequency_penalty, logit_bias=logit_bias, max_tokens=max_tokens, presence_penalty=presence_penalty, seed=seed, stop=stop, temperature=temperature, top_p=top_p, requery=requery, log_name=log_name, timeout=timeout, o1_retry=False)
+                            print(f"Done requerying with {DEFAULT_O1_REPLACEMENT}. {curr_hash}")
+
+                        assert len(orig_idxs) == len(new_completions)
+                        for orig_idx, completion in zip(orig_idxs, new_completions):
+                            completions[orig_idx] = completion
+
+                print(f"done with {i+1}/{len(chunked_prompts)}, saving... {curr_hash}")
                 self.cache.save_cache()
                 all_completions.extend(completions)
 
-        print("done")
+        print(f"done {curr_hash}")
+        if total_failed_prompts:
+            print(f"{total_failed_prompts} failed invalid prompt out of {len(all_completions)}. {curr_hash}")
+            print(f"an example completion: {all_completions[0].code[:200]}\n...\n{all_completions[0].code[-200:]} {curr_hash}")
         assert len(all_completions) == len(prompts)
         return all_completions
 
@@ -243,6 +295,11 @@ def _generate_completions(client: LLMClient, messages: Union[list[Prompt], tuple
     to_generate = []
     cache_keys = []
     for i, prompt in enumerate(messages):
+        if client.model_is_o1:
+            assert isinstance(prompt, (list, tuple))
+            if prompt[0]["role"] == "system":
+                prompt = prompt[1:]
+
         completion, cache_key = cache.query(model=client.model_name, message=prompt, frequency_penalty=frequency_penalty, logit_bias=logit_bias, max_tokens=max_tokens, presence_penalty=presence_penalty, seed=seed, stop=stop, temperature=temperature, top_p=top_p)
 
         if completion is not None:
@@ -252,11 +309,6 @@ def _generate_completions(client: LLMClient, messages: Union[list[Prompt], tuple
                 pbar.update(1)
         else:
             cache_keys.append((i, cache_key))
-            if isinstance(client, OpenAIClient):
-                if client.model_is_o1:
-                    assert isinstance(prompt, (list, tuple))
-                    if prompt[0]["role"] == "system":
-                        prompt = prompt[1:]
             to_generate.append(prompt)
     
     generated_completions, cost = client.generate_completions(messages=to_generate,
@@ -273,6 +325,7 @@ def _generate_completions(client: LLMClient, messages: Union[list[Prompt], tuple
                                                         )
 
     assert len(cache_keys) == len(generated_completions)
+
     for (orig_idx, key), completion in zip(cache_keys, generated_completions):
         completions[orig_idx] = completion
         cache.update(key, completion)

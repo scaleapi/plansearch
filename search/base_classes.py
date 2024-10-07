@@ -50,7 +50,7 @@ class Test:
 
 # Evan Wang, adapted from previously written code while at Caltech
 class Problem:
-    def __init__(self, problem_str: str, starter_code: str = "", public_tests: Optional[list[Test]] = None, private_tests: Optional[list[Test]] = None, public_exec_string: Optional[str] = None, private_exec_string: Optional[str] = None, fn_name: Optional[str] = None, solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None) -> None:
+    def __init__(self, problem_str: str, starter_code: str = "", public_tests: Optional[list[Test]] = None, private_tests: Optional[list[Test]] = None, public_exec_string: Optional[str] = None, private_exec_string: Optional[str] = None, fn_name: Optional[str] = None, solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None, subtasks: Optional[list[dict[str, Any]]] = None) -> None:
         self.problem_str = problem_str
         self.starter_code = starter_code
         self.has_Solution = "class Solution:" in starter_code if starter_code != "" else None
@@ -97,6 +97,8 @@ class Problem:
         
         self.solutions = solutions
         self.fail_codes = fail_codes
+
+        self.subtasks = subtasks
 
     def convert_stdio_to_fn_input(self):
         assert self.fn_name is None
@@ -171,10 +173,30 @@ class Problem:
             out_dict["fail_codes"] = self.fail_codes
 
         return out_dict
-
     
+    def calculate_score(self, results: list[bool]) -> float:
+        if self.subtasks is None:
+            print("Using default 1 score per test correct")
+            use_subtasks = [{"score": 1, "test_idxs": [i]} for i in range(len(results))]
+        else:
+            use_subtasks = self.subtasks
+        
+        score = 0
+        for subtask in use_subtasks:
+            subtask_good = True
+            for test_idx in subtask["test_idxs"]:
+                assert test_idx >= 0 and test_idx < len(results)
+                if not results[test_idx]:
+                    subtask_good = False
+                    break
+
+            score += subtask_good * subtask["score"]
+
+        return score
+
+
     @staticmethod
-    def from_coderm_item(question: str, starter_code: str, public_tests: Optional[dict[str, Any]], tests: Optional[dict[str, Any]], solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None) -> "Problem":
+    def from_coderm_item(question: str, starter_code: str, public_tests: Optional[dict[str, Any]], tests: Optional[dict[str, Any]], solutions: Optional[list[str]] = None, fail_codes: Optional[list[str]] = None, subtasks: Optional[list[dict[str, Any]]] = None) -> "Problem":
         if public_tests is None:
             assert tests is not None
             public_tests = {"fn_name": tests.get("fn_name", None), "inputs": [], "outputs": [], "exec_string": None}
@@ -197,7 +219,7 @@ class Problem:
         assert len(tests["inputs"]) == len(tests["outputs"])
         test_list = [Test((wrap_list(inp), {}), out, fn_name, has_Solution) for inp, out in zip(tests["inputs"], tests["outputs"])]
 
-        return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, fn_name=fn_name, public_exec_string=public_tests["exec_string"], private_exec_string=tests["exec_string"], solutions=solutions, fail_codes=fail_codes)
+        return Problem(question, starter_code=starter_code, public_tests=public_test_list, private_tests=test_list, fn_name=fn_name, public_exec_string=public_tests["exec_string"], private_exec_string=tests["exec_string"], solutions=solutions, fail_codes=fail_codes, subtasks=subtasks)
 
 
 class SearchModel(BaseModel, ABC):

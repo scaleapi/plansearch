@@ -43,6 +43,7 @@ class LLMClient:
         self.model_name = model_name
         self.is_chat = is_chat
         self.is_batched = is_batched
+        self.model_is_o1 = check_if_o1(model_name)
 
         assert batch_size is None or isinstance(batch_size, int)
         self.batch_size = batch_size
@@ -176,7 +177,6 @@ class OpenAIClient(LLMClient):
         self.max_backoff = max_backoff
         self.client = openai.OpenAI()
         self.is_loaded = True
-        self.model_is_o1 = check_if_o1(self.model_name)
    
     def generate(self, message: Prompt, frequency_penalty: Optional[float], logit_bias: Optional[dict[str, int]], max_tokens: Optional[int], presence_penalty: Optional[float], seed: Optional[int], stop: Union[Optional[str], list[str]], temperature: Optional[float], top_p: Optional[float], timeout: Optional[float] = None) -> Completion:
         if not self.is_chat:
@@ -316,7 +316,8 @@ class OpenAIClient(LLMClient):
         assert o is not None, "OpenAI returned a null response"
         num_tokens = response.usage.completion_tokens
         if self.model_is_o1:
-            print("NUM TOKENS:", num_tokens)
+            pass
+            # print("NUM TOKENS:", num_tokens)
         if choice.finish_reason == "length":
             print("Warning, output clipped.")
 
@@ -338,7 +339,7 @@ class AnthropicClient(LLMClient):
         if not self.is_chat:
             raise NotImplementedError("AnthropicClient completion format not implemented.")
 
-        assert isinstance(message, list)
+        assert isinstance(message, (list, tuple))
         system_prompt = None
         for i, individual_msg in enumerate(message):
             if individual_msg["role"] == "system":

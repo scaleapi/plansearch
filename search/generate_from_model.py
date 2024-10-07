@@ -6,12 +6,12 @@ from coderm.eval.generic import make_items_from_ds, Completion, CompletionResult
 from coderm.utils import gunzip_json_write
 
 from search.base_classes import SearchModel
-from search.exec_utils import run_tests_per_code
+from search.exec_utils import run_tests_per_code, run_individual_tests_per_code
 from search.dataset_utils import parse_dataset
 from search.python_utils import batch_map_on_nested_list
 
 
-def do_full_run(model: SearchModel, dataset_name: str, split: str, num_repeats: int, num_completions_from_model: int, output_path: str, exec_type: str, testbank: Optional[str] = None, num_workers: Optional[int] = os.cpu_count(), total_num_concurrent: int = 1000, executor: str = "http://127.0.0.1:8000", timeout: int = 60) -> tuple[list[list[str]], list[list[CompletionResult]]]:
+def do_full_run(model: SearchModel, dataset_name: str, split: str, num_repeats: int, num_completions_from_model: int, output_path: str, exec_type: str, testbank: Optional[str] = None, num_workers: Optional[int] = os.cpu_count(), total_num_concurrent: int = 1000, executor: str = "http://127.0.0.1:8000", timeout: int = 60, run_individual_tests: bool = False) -> tuple[list[list[str]], list[list[CompletionResult]]]:
     assert num_completions_from_model != 0
     assert num_repeats >= 1
 
@@ -74,8 +74,12 @@ def do_full_run(model: SearchModel, dataset_name: str, split: str, num_repeats: 
     public_results = [(None, None)] * num_total_to_eval 
 
     if exec_type != "none":
-        private_results = run_tests_per_code(flattened_codes, flattened_private_tests, [timeout] * num_total_to_eval, fn_names_pc=flattened_fn_names, testbank=testbank, num_workers=num_workers, total_num_concurrent=total_num_concurrent, executor=executor)
+        if run_individual_tests:
+            private_results = run_individual_tests_per_code(flattened_codes, flattened_private_tests, [timeout] * num_total_to_eval, fn_names_pc=flattened_fn_names, testbank=testbank, num_workers=num_workers, total_num_concurrent=total_num_concurrent, executor=executor)
+        else:
+            private_results = run_tests_per_code(flattened_codes, flattened_private_tests, [timeout] * num_total_to_eval, fn_names_pc=flattened_fn_names, testbank=testbank, num_workers=num_workers, total_num_concurrent=total_num_concurrent, executor=executor)
         assert len(private_results) == num_total_to_eval
+
     if exec_type == "both":
         public_results = run_tests_per_code(flattened_codes, flattened_public_tests, [timeout] * num_total_to_eval, fn_names_pc=flattened_fn_names, testbank=testbank, num_workers=num_workers, total_num_concurrent=total_num_concurrent, executor=executor)
         assert len(public_results) == num_total_to_eval
@@ -84,7 +88,19 @@ def do_full_run(model: SearchModel, dataset_name: str, split: str, num_repeats: 
     for orig_idx, code, private_result, public_result in zip(orig_problem_idxs, flattened_codes, private_results, public_results):
         completion_items[orig_idx].completions.append(Completion(code, -1, -1))
 
-        all_results[orig_idx].append(CompletionResult(private_result[0], private_result[1], public_result[0], public_result[1]))
+        if run_individual_tests:
+            score = problems[orig_idx].calculate_score([res[0] for res in private_result])
+            report_result = (True, "")
+            for result in private_result:
+                if not result[0]:
+                    report_result = result
+                    break
+            
+            all_results[orig_idx].append(CompletionResult(report_result[0], report_result[1], public_result[0], public_result[1], score))
+
+        else:
+            all_results[orig_idx].append(CompletionResult(private_result[0], private_result[1], public_result[0], public_result[1], None))
+
         if exec_type != "none":
             completion_items[orig_idx].results.append(all_results[orig_idx][-1])
         

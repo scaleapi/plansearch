@@ -85,8 +85,10 @@ def parse_dataset(dataset_name: str, split: str) -> list[Problem]:
                 assert row["starter_code"] == ""
             else:
                 raise ValueError("Each input must be either `list` or `str`.")
+        
+        subtasks = row.get("subtasks", None)
             
-        problems.append(Problem.from_coderm_item(row["question"], row["starter_code"], public_tests, private_tests, row.get("solutions", None), row.get("fail_codes", None)))
+        problems.append(Problem.from_coderm_item(row["question"], row["starter_code"], public_tests, private_tests, row.get("solutions", None), row.get("fail_codes", None), subtasks))
 
     return problems
 

@@ -195,7 +195,7 @@ class ComboObservationModel(SearchModel):
                               temperature=use_temperature,
                               top_p=self.top_p,
                               requery=True,
-                              timeout=150,
+                              timeout=600,
                               )
         assert len(outputs) == len(prompts)
         return outputs
@@ -240,9 +240,17 @@ class ComboObservationModel(SearchModel):
 
         log_attempted_parses = [[] for _ in range(len(filtered_obs_strlists))]
 
+            
+
         for iter in range(MAX_PARSE_TRIES):
             to_query = [parse_to_python_prompts[i] for i in unused_idxs]
-            parsed_obs_pythonlists = self.query_model("idea", to_query, temperature=iter * 0.2)
+
+            if getattr(self.querier.clients[self.idea_model], "model_is_o1", False):
+                temperature = 1
+            else:
+                temperature = iter * 0.2
+
+            parsed_obs_pythonlists = self.query_model("idea", to_query, temperature=temperature)
 
             for orig_idx, parse in zip(unused_idxs, parsed_obs_pythonlists):
                 log_attempted_parses[orig_idx].append(parse)
@@ -499,6 +507,8 @@ def get_combo_observation_model(args: argparse.Namespace) -> SearchModel:
         model_config_name="code_model", 
         temp_folder_base=args.experiment_directory
     )
+    if args.max_tokens == -1:
+        args.max_tokens = None
     return ComboObservationModel(
         idea_model_config_path=idea_model_path, 
         code_model_config_path=code_model_path, 
