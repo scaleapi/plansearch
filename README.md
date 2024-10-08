@@ -20,6 +20,16 @@ pip install -e .
 pip install -e CodeRM
 ```
 
+`plansearch/CodeRM` contains code for execution. Code execution can be set up to run locally by running:
+```bash
+pushd CodeRM/coderm/code_exec_server
+./build_and_run.sh
+popd
+```
+(these instructions are also in `CodeRM/README.md`)
+
+Running on a custom cluster is possible but may require some modifications to the codebase.
+
 ## Usage
 
 ### Datasets
@@ -66,7 +76,7 @@ No matter the search algorithm, `eval.py` takes in several arguments:
 In addition, there are arguments for the code execution:
 - `exec-batch-size`: How many total number of code/test pairs to execute at a time
 - `exec-num-processes`: Number of processes to separate `exec-batch-size` requests into
-- `executor`: The server URL for executing the code
+- `executor`: The server URL for executing the code. (None if local)
 - `testbank`: Optional string that if provided, points to a Hugging Face testbank which is a dataset of hash to test which is sent to the server for caching.
 - `timeout`: The timeout (in s) for each code/test pair to run. Default is $60$ s.
 
