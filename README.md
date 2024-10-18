@@ -156,5 +156,3 @@ Model config examples can be found in `model_configs/`. You can also add your ow
     - `without-pseudocode`: If specified, will skip the pseudocode step and go directly from natural language solution sketch to output code
     - `without-idea`: If specified, will skip the solution sketch and pseudocode step. Goes directly from observation combination to output code
 
-
-
