@@ -1,3 +1,9 @@
+*.cache
+*.pt
+*.pkl
+*.mp4
+*.pth
+
 # Logs
 logs
 *.log
@@ -42,6 +48,15 @@ tmp
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+
+# Mac OS
+.DS_Store
+
+# C extensions
+*.so
+*.o
+*.out
 
 # C extensions
 *.so
@@ -86,6 +101,8 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
+.hypothesis/
+.pytest_cache/
 *.py,cover
 .hypothesis/
 .pytest_cache/
@@ -95,6 +112,17 @@ cover/
 *.mo
 *.pot
 
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
 # Django stuff:
 *.log
 local_settings.py
@@ -157,6 +185,45 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+
+# editor
+.vscode
+**/.idea/
+**/scratch/
+*.swp
+.vim/
+
+# docker
+.docker/
+
+# archives
+*.zip
+*.tar
+*.gz
+*.tar.gz
+
+.codeartifact-pip-conf
+node_modules/
+
+# Weights and biases logs
+wandb/
+
+# search
+search/**/*logs*
+search/**/*cache*.json
+search/**/*results*/
+search/**/*sweep*/
+search/**/*test_notebooks*/
+search/**/*bruh*
+search/codeforces/
+search/**/caches/*.json
+search/notebooks/graph_notebooks/plots/*
 
 # mypy
 .mypy_cache/

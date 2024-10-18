@@ -1,0 +1,9 @@
+{
+    "client_type": "SGLang",
+    "model_name": "sg1",
+    "base_url": "http://localhost:30011",
+    "is_chat": true,
+    "is_batched": true,
+    "batch_size": 8192,
+    "price_per_input_output": [0, 0]
+}

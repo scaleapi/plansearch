@@ -1,0 +1,13 @@
+{
+    "client_type": "vLLM",
+    "model_name": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "is_chat": true,
+    "is_batched": true,
+    "batch_size": 4096,
+    "price_per_input_output": [0, 0],
+    "tensor_parallel_size": 4,
+    "gpu_memory_utilization": 0.9,
+    "max_model_len": 4096,
+    "dtype": "bfloat16",
+    "enforce_eager": true
+}

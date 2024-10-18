@@ -1,0 +1,8 @@
+{
+    "client_type": "Together",
+    "model_name": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+    "is_chat": true,
+    "is_batched": false,
+    "num_workers": 1024,
+    "price_per_input_output": [5e-6, 5e-6]
+}

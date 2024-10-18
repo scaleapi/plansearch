@@ -1,0 +1,8 @@
+{
+    "client_type": "OpenAI",
+    "model_name": "gpt-4-turbo",
+    "is_chat": true,
+    "is_batched": false,
+    "num_workers": 1024,
+    "price_per_input_output": [10e-6, 30e-6]
+}
