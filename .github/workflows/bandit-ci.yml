@@ -1,0 +1,63 @@
+name: Bandit
+
+on:
+  # Scan changed files in PRs:
+  pull_request: {}
+
+jobs:
+  bandit-scan:
+    name: Bandit
+    runs-on: ubuntu-22.04
+    if: (github.actor != 'dependabot[bot]') && (github.actor != 'github-actions[bot]')
+    steps:
+      - name: Install PyCQA/bandit
+        shell: bash
+        run: |
+          pip install bandit
+      - name: Checkout base branch
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 1
+          submodules: false
+      - name: Run a baseline scan
+        shell: bash
+        run: |
+          bandit --recursive --aggregate file . -f json -o baseline.json || true
+      - name: Checkout feature branch
+        shell: bash
+        run: |
+          git fetch origin $GITHUB_HEAD_REF
+          git checkout $GITHUB_HEAD_REF
+      - name: Run Scan off of baseline
+        shell: bash
+        run: |
+          bandit --recursive --aggregate file . --baseline baseline.json -f json -o results.json || true
+      - name: Install logging prerequisites
+        shell: bash {0}
+        run: |
+          sudo apt-get -y install jq curl
+      - name: Generate logger template
+        shell: bash {0} # don't fail the job if the logging fails
+        run: |
+          jq -n --arg organization $GITHUB_REPOSITORY_OWNER \
+          -n --arg time $( date +'%Y-%m-%dT%H:%M:%SZ'  ) \
+          -n --arg action $GITHUB_WORKFLOW \
+          -n --arg repository $GITHUB_REPOSITORY \
+          -n --arg sha $GITHUB_SHA \
+          -n --arg branch $GITHUB_HEAD_REF \
+          -n --arg link "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+          -f .github/workflows/output-template.json > tmp-output.json
+      - name: Format results appropriately from results.json
+        shell: bash {0} # don't fail the job if the logging fails
+        run: |
+          jq '.results | map({"path": .filename, "message": .issue_text, "line": .line_number})' results.json > tmp.json
+          jq --argjson scanResults "$(<tmp.json)" '.results += $scanResults' tmp-output.json >  output.json
+      - name: Send unified results to logging cluster
+        shell: bash {0} # don't fail the job if the logging fails
+        run: |
+          curl -X POST \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.N8N_PRODSEC_ACTIONS_TOKEN }}" \
+          -d @./output.json \
+          ${{ secrets.N8N_PRODSEC_ACTIONS_ENDPOINT }}

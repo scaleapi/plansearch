@@ -1,0 +1,13 @@
+{
+    "source": "github",
+    "organization": "\($organization)",
+    "timestamp": "\($time)",
+    "action": "\($action)",
+    "meta": {
+        "repository": "\($repository)",
+        "commit": "\($sha)",
+        "branch": "\($branch)",
+        "link": "\($link)"
+    },
+    "results": []
+}
